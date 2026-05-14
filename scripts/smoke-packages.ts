@@ -9,7 +9,7 @@ import { getCurrentPlatformKey, getPlatformTarget } from "./platform-targets";
 const root = path.resolve(import.meta.dir, "..");
 const packDir = await mkdtemp(path.join(tmpdir(), "distill-pack-"));
 const installDir = await mkdtemp(path.join(tmpdir(), "distill-install-"));
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const packageManagerCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 
 const currentPlatformPackage = (() => {
   const value = getPlatformTarget(getCurrentPlatformKey())?.packageName;
@@ -54,14 +54,12 @@ function resolveInstalledShimPath(installDir: string): string {
 }
 
 try {
-  runOrThrow(npmCommand, ["pack", "--workspace", currentPlatformPackage, "--pack-destination", packDir], root);
-  runOrThrow(npmCommand, ["pack", "--workspace", "@samuelfaj/distill", "--pack-destination", packDir], root);
-  runOrThrow(npmCommand, ["init", "-y"], installDir);
-
+  runOrThrow(packageManagerCommand, ["pack", "--filter", currentPlatformPackage, "--pack-destination", packDir], root);
+  runOrThrow(packageManagerCommand, ["pack", "--filter", "@samuelfaj/distill", "--pack-destination", packDir], root);
   const tarballs = readdirSync(packDir)
     .sort()
     .map((entry) => path.join(packDir, entry));
-  runOrThrow(npmCommand, ["install", ...tarballs], installDir);
+  runOrThrow(packageManagerCommand, ["add", ...tarballs], installDir);
 
   const shimPath = resolveInstalledShimPath(installDir);
   const versionOutput = runOrThrow(shimPath, ["--version"], installDir);

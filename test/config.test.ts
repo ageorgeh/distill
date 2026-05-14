@@ -19,7 +19,8 @@ const defaultAutoLearnConfig = {
   autoLearnScope: DEFAULT_AUTO_LEARN_SCOPE,
   autoLearnSource: DEFAULT_AUTO_LEARN_SOURCE,
   autoPromoteScopes: DEFAULT_AUTO_PROMOTE_SCOPES,
-  maxPromptDslEntries: DEFAULT_MAX_PROMPT_DSL_ENTRIES
+  maxPromptDslEntries: DEFAULT_MAX_PROMPT_DSL_ENTRIES,
+  debug: false
 };
 
 describe("parseCommand", () => {
@@ -79,6 +80,25 @@ describe("parseCommand", () => {
         datasetEnabled: true,
         datasetPath: undefined,
         ...defaultAutoLearnConfig
+      }
+    });
+  });
+
+  it("supports debug mode via flag", () => {
+    const command = parseCommand(["--debug", "summarize"], {}, {});
+
+    expect(command).toEqual({
+      kind: "run",
+      config: {
+        question: "summarize",
+        model: DEFAULT_MODEL,
+        host: DEFAULT_HOST,
+        apiKey: "",
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        datasetEnabled: true,
+        datasetPath: undefined,
+        ...defaultAutoLearnConfig,
+        debug: true
       }
     });
   });
@@ -183,7 +203,13 @@ describe("parseCommand", () => {
       autoLearnSource: "output",
       autoPromoteScopes: false,
       maxPromptDslEntries: 12
+      ,
+      debug: false
     });
+  });
+
+  it("enables debug from env", () => {
+    expect(resolveRuntimeDefaults({ DISTILL_DEBUG: "true" }, {}).debug).toBe(true);
   });
 
   it("parses config set commands", () => {

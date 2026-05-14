@@ -163,11 +163,11 @@ describe("summarizeBatch", () => {
       model: string;
       messages: Array<{ role: string; content: string }>;
       temperature: number;
-      max_tokens: number;
+      max_tokens?: number;
     };
     expect(body.model).toBe("qwen3.5:2b");
     expect(body.temperature).toBe(0);
-    expect(body.max_tokens).toBe(512);
+    expect(body.max_tokens).toBeUndefined();
     expect(body.messages[0].role).toBe("system");
     expect(body.messages[1].role).toBe("user");
     expect(body.messages[1].content).toContain("1 passed");

@@ -210,6 +210,7 @@ async function run(): Promise<number> {
     progress,
     onProgressPhase: emitProgressPhase,
     onProgressStop: emitProgressStop,
+    debug: command.config.debug === true,
     onBatchOutput: command.config.autoLearn !== false
       ? (output) =>
           learnFromDistillOutput(process.env, process.cwd(), output, {

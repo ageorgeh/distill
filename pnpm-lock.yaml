@@ -1,0 +1,70 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  packages/cli:
+    optionalDependencies:
+      '@samuelfaj/distill-darwin-arm64':
+        specifier: 1.4.9
+        version: 1.4.9
+      '@samuelfaj/distill-darwin-x64':
+        specifier: 1.4.9
+        version: 1.4.9
+      '@samuelfaj/distill-linux-arm64':
+        specifier: 1.4.9
+        version: 1.4.9
+      '@samuelfaj/distill-linux-x64':
+        specifier: 1.4.9
+        version: 1.4.9
+
+  packages/distill-darwin-arm64: {}
+
+  packages/distill-darwin-x64: {}
+
+  packages/distill-linux-arm64: {}
+
+  packages/distill-linux-x64: {}
+
+  packages/distill-win32-x64: {}
+
+packages:
+
+  '@samuelfaj/distill-darwin-arm64@1.4.9':
+    resolution: {integrity: sha512-djkUJyYynxye97WcWAtiMM0UroZieFfqtiOitQznVnQ0goETNLZfcDQPnJNeDodVN1mj7PvJa74L6bITypdxaA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@samuelfaj/distill-darwin-x64@1.4.9':
+    resolution: {integrity: sha512-CGeg7K28x+M2l+JqxBH5sKJVxacaLvzumjjcKxd0wKvW5t4BxN9G7CMRpRz8ambRTPw4Grft/K4fgEwNGAUTOw==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@samuelfaj/distill-linux-arm64@1.4.9':
+    resolution: {integrity: sha512-5Mjy2NH8abR9r9xgpDdz7dGJwKEbzYZguvQsjqoadTLPVda30yPHNnIz3QXXUAH2XKJe1mSzQlnL3nXA3EWXgA==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@samuelfaj/distill-linux-x64@1.4.9':
+    resolution: {integrity: sha512-5C36XbfGl6p5EwF/eJLBcIxVbdZyu+xDNNI1kQUlohq4wgkaVhWxVNVCdp72ed50O4OQt5mUX6ofVt8AZnV0nQ==}
+    cpu: [x64]
+    os: [linux]
+
+snapshots:
+
+  '@samuelfaj/distill-darwin-arm64@1.4.9':
+    optional: true
+
+  '@samuelfaj/distill-darwin-x64@1.4.9':
+    optional: true
+
+  '@samuelfaj/distill-linux-arm64@1.4.9':
+    optional: true
+
+  '@samuelfaj/distill-linux-x64@1.4.9':
+    optional: true

@@ -144,17 +144,120 @@ const FEW_SHOT = [
 
 const MAX_INPUT_CHARS = 24000;
 
+const SALIENT_LINE_PATTERNS = [
+  /\b(error|fail|failed|exception|traceback|panic|fatal|timeout|timed out)\b/i,
+  /\b(unsafe|review|risk|destroy|drop|delete|truncate|replace|force)\b/i,
+  /\b(denied|forbidden|unauthorized|refused|cannot|can't|invalid)\b/i,
+  /^\s*(\+|-|~)\s+/,
+  /^\s*at\s+\S+/,
+  /\b(stack trace|stacktrace)\b/i,
+];
+
+function trimLine(line: string, maxLineChars: number): string {
+  if (line.length <= maxLineChars) {
+    return line;
+  }
+
+  const keep = Math.max(20, maxLineChars - 16);
+  return `${line.slice(0, keep)} ...[cut]`;
+}
+
+function extractSalientLines(input: string, maxChars: number): string {
+  if (maxChars <= 0) {
+    return "";
+  }
+
+  const lines = input.split(/\r?\n/);
+  const chosen: string[] = [];
+  const seen = new Set<number>();
+  let used = 0;
+  const maxLineChars = Math.max(120, Math.floor(maxChars / 5));
+
+  const pushLine = (index: number): boolean => {
+    if (seen.has(index)) {
+      return false;
+    }
+
+    const normalized = trimLine(lines[index] ?? "", maxLineChars);
+
+    if (!normalized.trim()) {
+      return false;
+    }
+
+    const addCost = normalized.length + 1;
+
+    if (used + addCost > maxChars) {
+      return false;
+    }
+
+    seen.add(index);
+    chosen.push(normalized);
+    used += addCost;
+    return true;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+
+    if (!SALIENT_LINE_PATTERNS.some((pattern) => pattern.test(line))) {
+      continue;
+    }
+
+    if (!pushLine(index)) {
+      break;
+    }
+  }
+
+  return chosen.join("\n");
+}
+
 export function fitInput(input: string, maxChars: number = MAX_INPUT_CHARS): string {
   if (input.length <= maxChars) {
     return input;
   }
 
-  const half = Math.floor(maxChars / 2) - 50;
-  const head = input.slice(0, half);
-  const tail = input.slice(-half);
-  const dropped = input.length - head.length - tail.length;
+  const marker = "\n... [input compacted for length] ...\n";
+  const droppedMarker = (dropped: number) =>
+    `\n... [${dropped} chars not shown] ...\n`;
+  const reserved = marker.length * 2 + 80;
+  const headBudget = Math.max(200, Math.floor(maxChars * 0.28));
+  const tailBudget = Math.max(200, Math.floor(maxChars * 0.28));
+  const salientBudget = Math.max(
+    200,
+    maxChars - reserved - headBudget - tailBudget,
+  );
 
-  return `${head}\n... [${dropped} chars truncated] ...\n${tail}`;
+  const head = input.slice(0, headBudget);
+  const tail = input.slice(-tailBudget);
+  const salient = extractSalientLines(input, salientBudget);
+
+  if (!salient) {
+    const half = Math.floor((maxChars - 80) / 2);
+    const fallbackHead = input.slice(0, half);
+    const fallbackTail = input.slice(-half);
+    const dropped = input.length - fallbackHead.length - fallbackTail.length;
+
+    return `${fallbackHead}${droppedMarker(dropped)}${fallbackTail}`.slice(
+      0,
+      maxChars,
+    );
+  }
+
+  const draft = [
+    head,
+    marker,
+    "[salient lines]",
+    salient,
+    marker,
+    tail,
+  ].join("\n");
+
+  if (draft.length <= maxChars) {
+    const dropped = input.length - (head.length + tail.length + salient.length);
+    return `${draft}${droppedMarker(Math.max(0, dropped))}`.slice(0, maxChars);
+  }
+
+  return draft.slice(0, maxChars);
 }
 
 export function buildBatchPrompt(

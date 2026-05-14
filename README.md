@@ -16,6 +16,38 @@ Install:
 npm i -g @samuelfaj/distill
 ```
 
+Local install from this repo (no publish):
+
+```bash
+# from repo root
+pnpm install
+pnpm run build
+cd packages/cli
+pnpm link --global
+cd ../..
+pnpm list -g @samuelfaj/distill
+distill --version
+```
+
+Notes:
+
+- `pnpm run build` compiles and syncs the native binary for your current platform into `packages/distill-*/bin`.
+- `pnpm link --global` from `packages/cli` gives you the real global-style `distill` command from local source.
+- `pnpm list -g @samuelfaj/distill` should show `@samuelfaj/distill@link:.../packages/cli`.
+- If `distill` is not found after linking, ensure your `PNPM_HOME` is on `PATH`.
+
+Update after new local changes:
+
+```bash
+pnpm run build
+```
+
+Remove global local link:
+
+```bash
+pnpm unlink --global @samuelfaj/distill
+```
+
 Run onboarding:
 
 ```bash
@@ -76,6 +108,17 @@ bun test 2>&1 | distill "Did tests pass? Return PASS or FAIL, followed by failin
 git diff | distill "What changed? Return only files changed and one-line summary for each."
 terraform plan 2>&1 | distill "Is this safe? Return SAFE, REVIEW, or UNSAFE, followed by risky changes."
 ```
+
+Debug raw fallback reasons:
+
+```bash
+cmd 2>&1 | distill --debug "Did tests pass? Return PASS or FAIL."
+DISTILL_DEBUG=true cmd 2>&1 | distill "Did tests pass? Return PASS or FAIL."
+```
+
+Debug logs go to `stderr` with prefix `distill: debug:` and reason keys like:
+`fallback=batch_bad_distillation`, `fallback=batch_error`,
+`fallback=interactive_prompt`, `fallback=watch_bad_distillation`, `fallback=watch_error`.
 
 **Recommended LLM: qwen3.5-4b**
 

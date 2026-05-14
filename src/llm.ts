@@ -5,7 +5,7 @@ import {
   buildThreadLearnPrompt,
   buildTranslatePrompt,
   buildWatchPrompt,
-  type PromptMessages
+  type PromptMessages,
 } from "./prompt";
 
 export interface ChatCompletionRequest {
@@ -14,7 +14,6 @@ export interface ChatCompletionRequest {
   model: string;
   prompt: string | PromptMessages;
   timeoutMs: number;
-  maxTokens?: number;
   temperature?: number;
   fetchImpl?: typeof fetch;
 }
@@ -39,9 +38,8 @@ export async function chatCompletion({
   model,
   prompt,
   timeoutMs,
-  maxTokens,
   temperature,
-  fetchImpl = fetch
+  fetchImpl = fetch,
 }: ChatCompletionRequest): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -53,21 +51,23 @@ export async function chatCompletion({
         ? [{ role: "user", content: prompt }]
         : [
             { role: "system", content: prompt.system },
-            { role: "user", content: prompt.user }
+            { role: "user", content: prompt.user },
           ];
+
+    const body: Record<string, unknown> = {
+      model,
+      messages,
+      temperature: temperature ?? 0,
+    };
+
     const response = await fetchImpl(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`
+        authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature: temperature ?? 0,
-        ...(maxTokens ? { max_tokens: maxTokens } : {})
-      }),
-      signal: controller.signal
+      body: JSON.stringify(body),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -92,9 +92,11 @@ export async function chatCompletion({
       throw new Error("Provider returned an invalid response payload.");
     }
 
-    const choice = (payload as {
-      choices: Array<{ message?: { content?: string } }>;
-    }).choices[0];
+    const choice = (
+      payload as {
+        choices: Array<{ message?: { content?: string } }>;
+      }
+    ).choices[0];
     const content = choice?.message?.content?.trim();
 
     if (!content) {
@@ -110,7 +112,7 @@ export async function chatCompletion({
 function summarize(
   config: RuntimeConfig,
   prompt: PromptMessages,
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch,
 ): Promise<string> {
   return chatCompletion({
     baseUrl: config.host,
@@ -119,8 +121,7 @@ function summarize(
     prompt,
     timeoutMs: config.timeoutMs,
     temperature: 0,
-    maxTokens: 512,
-    fetchImpl
+    fetchImpl,
   });
 }
 
@@ -128,7 +129,7 @@ export function summarizeBatch(
   config: RuntimeConfig,
   input: string,
   optionsOrFetchImpl: { dslMemory?: string } | typeof fetch = {},
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch,
 ): Promise<string> {
   const options =
     typeof optionsOrFetchImpl === "function" ? {} : optionsOrFetchImpl;
@@ -138,7 +139,7 @@ export function summarizeBatch(
   return summarize(
     config,
     buildBatchPrompt(config.question, input, options),
-    resolvedFetchImpl
+    resolvedFetchImpl,
   );
 }
 
@@ -146,7 +147,7 @@ export function summarizeTranslate(
   config: RuntimeConfig,
   text: string,
   language: string,
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch,
 ): Promise<string> {
   return summarize(config, buildTranslatePrompt(text, language), fetchImpl);
 }
@@ -155,19 +156,19 @@ export function summarizeWatch(
   config: RuntimeConfig,
   previousCycle: string,
   currentCycle: string,
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch,
 ): Promise<string> {
   return summarize(
     config,
     buildWatchPrompt(config.question, previousCycle, currentCycle),
-    fetchImpl
+    fetchImpl,
   );
 }
 
 export function summarizeDslPromotion(
   config: RuntimeConfig,
   entries: string,
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch,
 ): Promise<string> {
   return summarize(config, buildDslPromotionPrompt(entries), fetchImpl);
 }
@@ -177,11 +178,11 @@ export function summarizeThreadLearn(
   transcript: string,
   candidates: Parameters<typeof buildThreadLearnPrompt>[1],
   dslMemory: string,
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch,
 ): Promise<string> {
   return summarize(
     config,
     buildThreadLearnPrompt(transcript, candidates, dslMemory),
-    fetchImpl
+    fetchImpl,
   );
 }

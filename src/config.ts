@@ -2,7 +2,7 @@ import cliPackage from "../packages/cli/package.json";
 
 export const DISTILL_VERSION = cliPackage.version;
 
-export const DEFAULT_MODEL = "qwen3.5:2b";
+export const DEFAULT_MODEL = "qwen3.5:4b";
 export const DEFAULT_HOST = "http://127.0.0.1:11434/v1";
 export const DEFAULT_TIMEOUT_MS = 90_000;
 export const DEFAULT_IDLE_MS = 1_200;
@@ -27,6 +27,7 @@ export interface DistillSettings {
   autoLearnSource?: "output";
   autoPromoteScopes?: boolean;
   maxPromptDslEntries?: number;
+  debug?: boolean;
 }
 
 export interface RuntimeConfig extends DistillSettings {
@@ -74,7 +75,7 @@ export class UsageError extends Error {
 function readFlagValue(
   argv: string[],
   index: number,
-  name: string
+  name: string,
 ): { value: string; nextIndex: number } {
   const current = argv[index];
   const inline = current.slice(name.length + 1);
@@ -117,7 +118,9 @@ function coerceBoolean(input: string | boolean | undefined): boolean {
     return input;
   }
 
-  const value = String(input ?? DEFAULT_DATASET_ENABLED).trim().toLowerCase();
+  const value = String(input ?? DEFAULT_DATASET_ENABLED)
+    .trim()
+    .toLowerCase();
 
   if (["1", "true", "yes", "on"].includes(value)) {
     return true;
@@ -130,7 +133,18 @@ function coerceBoolean(input: string | boolean | undefined): boolean {
   throw new UsageError("Boolean values must be true or false.");
 }
 
-function coercePositiveInteger(input: string | number | undefined, label: string): number {
+function coerceDebugBoolean(input: string | boolean | undefined): boolean {
+  if (input === undefined) {
+    return false;
+  }
+
+  return coerceBoolean(input);
+}
+
+function coercePositiveInteger(
+  input: string | number | undefined,
+  label: string,
+): number {
   const value = Number(input);
 
   if (!Number.isInteger(value) || value <= 0) {
@@ -142,34 +156,35 @@ function coercePositiveInteger(input: string | number | undefined, label: string
 
 export function resolveRuntimeDefaults(
   env: NodeJS.ProcessEnv,
-  persisted: PersistedConfig
+  persisted: PersistedConfig,
 ): DistillSettings {
   const model = env.DISTILL_MODEL ?? persisted.model ?? DEFAULT_MODEL;
   const host = normalizeHost(
-    env.DISTILL_HOST ?? persisted.host ?? DEFAULT_HOST
+    env.DISTILL_HOST ?? persisted.host ?? DEFAULT_HOST,
   );
   const apiKey = env.DISTILL_API_KEY ?? persisted.apiKey ?? "";
   const timeoutMs = coerceTimeout(
-    env.DISTILL_TIMEOUT_MS ?? String(persisted.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    env.DISTILL_TIMEOUT_MS ?? String(persisted.timeoutMs ?? DEFAULT_TIMEOUT_MS),
   );
   const datasetEnabled = coerceBoolean(
-    env.DISTILL_DATASET_ENABLED ?? persisted.datasetEnabled
+    env.DISTILL_DATASET_ENABLED ?? persisted.datasetEnabled,
   );
   const datasetPath = env.DISTILL_DATASET_PATH ?? persisted.datasetPath;
   const autoLearn = coerceBoolean(
-    env.DISTILL_AUTO_LEARN ?? persisted.autoLearn ?? DEFAULT_AUTO_LEARN
+    env.DISTILL_AUTO_LEARN ?? persisted.autoLearn ?? DEFAULT_AUTO_LEARN,
   );
   const autoPromoteScopes = coerceBoolean(
     env.DISTILL_AUTO_PROMOTE_SCOPES ??
       persisted.autoPromoteScopes ??
-      DEFAULT_AUTO_PROMOTE_SCOPES
+      DEFAULT_AUTO_PROMOTE_SCOPES,
   );
   const maxPromptDslEntries = coercePositiveInteger(
     env.DISTILL_MAX_PROMPT_DSL_ENTRIES ??
       persisted.maxPromptDslEntries ??
       DEFAULT_MAX_PROMPT_DSL_ENTRIES,
-    "max-prompt-dsl-entries"
+    "max-prompt-dsl-entries",
   );
+  const debug = coerceDebugBoolean(env.DISTILL_DEBUG);
 
   return {
     model,
@@ -182,7 +197,8 @@ export function resolveRuntimeDefaults(
     autoLearnScope: DEFAULT_AUTO_LEARN_SCOPE,
     autoLearnSource: DEFAULT_AUTO_LEARN_SOURCE,
     autoPromoteScopes,
-    maxPromptDslEntries
+    maxPromptDslEntries,
+    debug,
   };
 }
 
@@ -203,7 +219,7 @@ function parseConfigCommand(argv: string[]): Command {
       "dataset-path",
       "auto-learn",
       "auto-promote-scopes",
-      "max-prompt-dsl-entries"
+      "max-prompt-dsl-entries",
     ].includes(key)
   ) {
     throw new UsageError(`Unknown config key: ${argv[1]}`);
@@ -223,7 +239,7 @@ function parseConfigCommand(argv: string[]): Command {
     return {
       kind: "configSet",
       key,
-      value: coerceTimeout(rawValue)
+      value: coerceTimeout(rawValue),
     };
   }
 
@@ -231,7 +247,7 @@ function parseConfigCommand(argv: string[]): Command {
     return {
       kind: "configSet",
       key,
-      value: normalizeHost(rawValue)
+      value: normalizeHost(rawValue),
     };
   }
 
@@ -239,7 +255,7 @@ function parseConfigCommand(argv: string[]): Command {
     return {
       kind: "configSet",
       key,
-      value: coerceBoolean(rawValue)
+      value: coerceBoolean(rawValue),
     };
   }
 
@@ -247,7 +263,7 @@ function parseConfigCommand(argv: string[]): Command {
     return {
       kind: "configSet",
       key,
-      value: coerceBoolean(rawValue)
+      value: coerceBoolean(rawValue),
     };
   }
 
@@ -255,21 +271,21 @@ function parseConfigCommand(argv: string[]): Command {
     return {
       kind: "configSet",
       key,
-      value: coercePositiveInteger(rawValue, key)
+      value: coercePositiveInteger(rawValue, key),
     };
   }
 
   return {
     kind: "configSet",
     key,
-    value: rawValue
+    value: rawValue,
   };
 }
 
 export function parseCommand(
   argv: string[],
   env: NodeJS.ProcessEnv,
-  persisted: PersistedConfig = {}
+  persisted: PersistedConfig = {},
 ): Command {
   if (argv.length === 0) {
     return { kind: "onboard" };
@@ -318,8 +334,9 @@ export function parseCommand(
         autoLearnScope: defaults.autoLearnScope,
         autoLearnSource: defaults.autoLearnSource,
         autoPromoteScopes: defaults.autoPromoteScopes,
-        maxPromptDslEntries: defaults.maxPromptDslEntries
-      }
+        maxPromptDslEntries: defaults.maxPromptDslEntries,
+        debug: defaults.debug,
+      },
     };
   }
 
@@ -365,6 +382,11 @@ export function parseCommand(
       continue;
     }
 
+    if (token === "--debug") {
+      defaults.debug = true;
+      continue;
+    }
+
     if (token.startsWith("-")) {
       throw new UsageError(`Unknown flag: ${token}`);
     }
@@ -396,8 +418,9 @@ export function parseCommand(
       autoLearnScope: defaults.autoLearnScope,
       autoLearnSource: defaults.autoLearnSource,
       autoPromoteScopes: defaults.autoPromoteScopes,
-      maxPromptDslEntries: defaults.maxPromptDslEntries
-    }
+      maxPromptDslEntries: defaults.maxPromptDslEntries,
+      debug: defaults.debug,
+    },
   };
 }
 
@@ -411,7 +434,7 @@ export function formatUsage(): string {
     "  distill dsl promote --dry-run",
     '  distill dsl add alias A1 "auth fix" --scope project',
     '  distill translate "Best: Fix auth bug. Pass: tests pass." [language]',
-    '  distill config host http://127.0.0.1:11434/v1',
+    "  distill config host http://127.0.0.1:11434/v1",
     '  distill config model "qwen3.5:2b"',
     '  distill --host http://127.0.0.1:1234/v1 --model my-model "summarize"',
     "",
@@ -420,6 +443,7 @@ export function formatUsage(): string {
     `  --host <url>          OpenAI-compatible base URL (default: ${DEFAULT_HOST})`,
     "  --api-key <key>       API key (env: DISTILL_API_KEY)",
     `  --timeout-ms <ms>     Request timeout in milliseconds (default: ${DEFAULT_TIMEOUT_MS})`,
+    "  --debug               Print fallback reasons to stderr (env: DISTILL_DEBUG=true)",
     "",
     "Local fine-tuning capture (enabled by default):",
     "  Successful batch summaries are appended as JSONL under the config dir",
@@ -429,6 +453,6 @@ export function formatUsage(): string {
     "  DISTILL_AUTO_LEARN=false       Disable project-scoped DSL auto-learn",
     "  DISTILL_MAX_PROMPT_DSL_ENTRIES=<n>  Limit DSL entries injected into prompts",
     "  --help                Show usage",
-    "  --version             Show version"
+    "  --version             Show version",
   ].join("\n");
 }

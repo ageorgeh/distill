@@ -27,7 +27,7 @@ const WATCH_IDLE_MS = 1_800;
 const WATCH_START_DELAY_MS = 600;
 const INTERACTIVE_DELAY_MS = 1_000;
 const itPty = process.platform === "linux" ? it : it.skip;
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const packageManagerCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const isolatedConfigPath = path.join(
   tmpdir(),
   `distill-e2e-default-config-${process.pid}.json`
@@ -258,7 +258,7 @@ function normalizePtyOutput(output: string): string {
 }
 
 beforeAll(() => {
-  runOrThrow(npmCommand, ["run", "build"], root);
+  runOrThrow(packageManagerCommand, ["run", "build"], root);
 });
 
 describe("distill end-to-end", () => {
@@ -656,7 +656,7 @@ describe("distill end-to-end", () => {
     }
   });
 
-  it("works after packing and installing the npm package locally", async () => {
+  it("works after packing and installing the package locally", async () => {
     const fake = await createFakeChatProvider((_body, _index) =>
       new Response(
         JSON.stringify({
@@ -671,21 +671,20 @@ describe("distill end-to-end", () => {
 
     try {
       runOrThrow(
-        npmCommand,
-        ["pack", "--workspace", currentPlatformPackage, "--pack-destination", packDir],
+        packageManagerCommand,
+        ["pack", "--filter", currentPlatformPackage, "--pack-destination", packDir],
         root
       );
       runOrThrow(
-        npmCommand,
-        ["pack", "--workspace", "@samuelfaj/distill", "--pack-destination", packDir],
+        packageManagerCommand,
+        ["pack", "--filter", "@samuelfaj/distill", "--pack-destination", packDir],
         root
       );
-      runOrThrow(npmCommand, ["init", "-y"], installDir);
 
       const tarballs = readdirSync(packDir)
         .sort()
         .map((entry) => path.join(packDir, entry));
-      runOrThrow(npmCommand, ["install", ...tarballs], installDir);
+      runOrThrow(packageManagerCommand, ["add", ...tarballs], installDir);
 
       const installedShim = resolveInstalledShimPath(installDir);
       const version = await runProcess(installedShim, ["--version"], {

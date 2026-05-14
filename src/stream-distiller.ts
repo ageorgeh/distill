@@ -53,6 +53,7 @@ export interface DistillSessionOptions {
   idleMs?: number;
   interactiveGapMs?: number;
   progressFrameMs?: number;
+  debug?: boolean;
 }
 
 export class DistillSession {
@@ -69,6 +70,7 @@ export class DistillSession {
   private readonly idleMs: number;
   private readonly interactiveGapMs: number;
   private readonly progressFrameMs: number;
+  private readonly debug: boolean;
   private readonly rawBuffers: Buffer[] = [];
   private readonly completedBursts: Burst[] = [];
   private currentBurstBuffers: Buffer[] = [];
@@ -101,6 +103,7 @@ export class DistillSession {
     this.idleMs = options.idleMs ?? DEFAULT_IDLE_MS;
     this.interactiveGapMs = options.interactiveGapMs ?? DEFAULT_INTERACTIVE_GAP_MS;
     this.progressFrameMs = options.progressFrameMs ?? DEFAULT_PROGRESS_FRAME_MS;
+    this.debug = options.debug ?? false;
     this.onProgressPhase?.(this.progressPhase);
     this.startProgress();
   }
@@ -157,6 +160,7 @@ export class DistillSession {
       const summary = await this.summarizer.summarizeBatch(normalizedInput);
 
       if (looksLikeBadDistillation(rawInput, summary)) {
+        this.debugLog(`fallback=batch_bad_distillation bytes=${rawInput.length}`);
         this.stopProgress(true);
         this.stdout.write(Buffer.concat(this.rawBuffers));
         return;
@@ -167,7 +171,10 @@ export class DistillSession {
       this.stdout.write(ensureTrailingNewline(output));
       await this.captureDatasetRecord(normalizedInput, output);
       await this.captureDslLearning(output);
-    } catch {
+    } catch (error) {
+      this.debugLog(
+        `fallback=batch_error reason=${this.formatErrorReason(error)} bytes=${rawInput.length}`
+      );
       this.stopProgress(true);
       this.stdout.write(Buffer.concat(this.rawBuffers));
     }
@@ -247,6 +254,7 @@ export class DistillSession {
 
       this.mode = "interactive";
       this.passthrough = true;
+      this.debugLog(`fallback=interactive_prompt bytes=${this.rawByteLength()}`);
       this.clearTimers();
       this.stopProgress(true);
       this.stdout.write(Buffer.concat(this.rawBuffers));
@@ -398,13 +406,19 @@ export class DistillSession {
         );
 
         if (looksLikeBadDistillation(current.raw, summary)) {
+          this.debugLog(
+            `fallback=watch_bad_distillation pair=${previous.id}:${current.id} bytes=${current.raw.length}`
+          );
           this.renderWatchFallback(current.raw);
           return;
         }
 
         this.renderWatchSummary(summary.trim());
         this.trimWatchHistory();
-      } catch {
+      } catch (error) {
+        this.debugLog(
+          `fallback=watch_error pair=${previous.id}:${current.id} reason=${this.formatErrorReason(error)} bytes=${current.raw.length}`
+        );
         this.renderWatchFallback(current.raw);
       }
     });
@@ -460,5 +474,25 @@ export class DistillSession {
     }
 
     this.completedBursts.splice(0, this.completedBursts.length - 2);
+  }
+
+  private debugLog(message: string): void {
+    if (!this.debug) {
+      return;
+    }
+
+    this.stderr?.write(`distill: debug: ${message}\n`);
+  }
+
+  private rawByteLength(): number {
+    return this.rawBuffers.reduce((sum, chunk) => sum + chunk.length, 0);
+  }
+
+  private formatErrorReason(error: unknown): string {
+    if (error instanceof Error && error.message.trim().length > 0) {
+      return JSON.stringify(error.message.trim());
+    }
+
+    return JSON.stringify("unknown_error");
   }
 }

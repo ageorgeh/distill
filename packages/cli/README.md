@@ -47,3 +47,14 @@ You can also pipe command output into `distill`:
 bun test 2>&1 | distill "Did tests pass? Return PASS or FAIL, followed by failing test names if any."
 git diff | distill "What changed? Return only files changed and one-line summary for each."
 ```
+
+Debug raw fallback reasons:
+
+```bash
+cmd 2>&1 | distill --debug "Did tests pass? Return PASS or FAIL."
+DISTILL_DEBUG=true cmd 2>&1 | distill "Did tests pass? Return PASS or FAIL."
+```
+
+Debug logs go to `stderr` with prefix `distill: debug:` and reason keys like:
+`fallback=batch_bad_distillation`, `fallback=batch_error`,
+`fallback=interactive_prompt`, `fallback=watch_bad_distillation`, `fallback=watch_error`.

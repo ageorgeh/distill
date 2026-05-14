@@ -234,6 +234,29 @@ describe("DistillSession", () => {
     }
   });
 
+  it("prints fallback reason when debug mode is enabled", async () => {
+    const stdout = createWriter();
+    const stderr = createWriter();
+    const session = new DistillSession({
+      stdout,
+      stderr,
+      isTTY: false,
+      idleMs: 10,
+      interactiveGapMs: 5,
+      debug: true,
+      summarizer: {
+        summarizeBatch: async () => "",
+        summarizeWatch: async () => "unused"
+      }
+    });
+
+    session.push(Buffer.from("raw payload\n"));
+    await session.end();
+
+    expect(stdout.read()).toBe("raw payload\n");
+    expect(stderr.read()).toContain("distill: debug: fallback=batch_bad_distillation");
+  });
+
   it("skips dataset writes when disabled", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "distill-session-dataset-"));
     const datasetPath = path.join(dir, "distill.jsonl");
