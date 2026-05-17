@@ -9,7 +9,7 @@ npm i -g @samuelfaj/distill
 Run onboarding:
 
 ```bash
-distill
+distill onboard
 ```
 
 After onboarding, use `/distill` in Claude/Codex to make the agent keep talking in distill language for the whole thread. It should adopt the language style, not return your prompt rewritten.

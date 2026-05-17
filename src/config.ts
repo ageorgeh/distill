@@ -287,7 +287,7 @@ export function parseCommand(
   env: NodeJS.ProcessEnv,
   persisted: PersistedConfig = {},
 ): Command {
-  if (argv.length === 0) {
+  if (argv.length === 1 && argv[0] === "onboard") {
     return { kind: "onboard" };
   }
 
@@ -384,6 +384,7 @@ export function parseCommand(
 
     if (token === "--debug") {
       defaults.debug = true;
+      console.log("Running in debug mode");
       continue;
     }
 
@@ -428,6 +429,7 @@ export function formatUsage(): string {
   return [
     "Usage:",
     '  cmd 2>&1 | distill "question"',
+    "  distill onboard",
     "  distill dsl show",
     "  distill dsl show --candidates",
     '  distill dsl learn --dry-run "Dict+: A1=auth fix"',

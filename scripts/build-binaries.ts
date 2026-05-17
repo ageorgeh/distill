@@ -1,17 +1,22 @@
 import { mkdir } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { getCurrentPlatformKey, selectPlatformTargets } from "./platform-targets";
+import {
+  getCurrentPlatformKey,
+  selectPlatformTargets,
+} from "./platform-targets";
 
 const root = path.resolve(import.meta.dir, "..");
 const entrypoint = path.join(root, "src", "cli.ts");
 const currentTargetKey = getCurrentPlatformKey();
 const selectedTargets = selectPlatformTargets({
-  buildAll: process.env.DISTILL_BUILD_ALL === "1"
+  buildAll: process.env.DISTILL_BUILD_ALL === "1",
 });
 
 if (selectedTargets.length === 0) {
-  throw new Error(`Unsupported build target for this machine: ${currentTargetKey}.`);
+  throw new Error(
+    `Unsupported build target for this machine: ${currentTargetKey}.`,
+  );
 }
 
 for (const target of selectedTargets) {
@@ -25,12 +30,12 @@ for (const target of selectedTargets) {
       "--compile",
       `--target=${target.bunTarget}`,
       `--outfile=${outfile}`,
-      entrypoint
+      entrypoint,
     ],
     {
       cwd: root,
-      stdio: "inherit"
-    }
+      stdio: "inherit",
+    },
   );
 
   if (result.status !== 0) {

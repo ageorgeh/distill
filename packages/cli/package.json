@@ -28,5 +28,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/samuelfaj/distill"
+  },
+  "devDependencies": {
+    "@types/node": "^25.7.0"
   }
 }

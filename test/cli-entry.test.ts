@@ -168,7 +168,7 @@ describe("cli entrypoint", () => {
       await writeFile(path.join(home, ".codex", "AGENTS.md"), oldBlock);
       await writeFile(path.join(home, ".claude", "CLAUDE.md"), oldBlock);
 
-      const result = spawnSync("bun", ["run", cli], {
+      const result = spawnSync("bun", ["run", cli, "onboard"], {
         cwd: root,
         encoding: "utf8",
         input: [

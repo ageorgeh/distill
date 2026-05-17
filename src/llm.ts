@@ -32,6 +32,18 @@ function buildChatCompletionsUrl(baseUrl: string): URL {
   return normalized;
 }
 
+/**
+curl -sS http://127.0.0.1:11434/v1/chat/completions \
+                -H 'content-type: application/json' \
+                -d '{
+          "model":"qwen3.5:9b",
+          "messages":[{"role":"user","content":"Return exactly OK"}],
+          "temperature":0,
+          "reasoning_effort": "none"
+        }' | jq . 
+ 
+ */
+
 export async function chatCompletion({
   baseUrl,
   apiKey,
@@ -54,10 +66,12 @@ export async function chatCompletion({
             { role: "user", content: prompt.user },
           ];
 
+    // https://docs.ollama.com/api/openai-compatibility
     const body: Record<string, unknown> = {
       model,
       messages,
       temperature: temperature ?? 0,
+      reasoning_effort: "none",
     };
 
     const response = await fetchImpl(url, {
@@ -100,7 +114,9 @@ export async function chatCompletion({
     const content = choice?.message?.content?.trim();
 
     if (!content) {
-      throw new Error("Provider returned an empty response.");
+      throw new Error(
+        `Provider returned an empty response. Payload: ${JSON.stringify(payload)} END`,
+      );
     }
 
     return content;

@@ -3,7 +3,7 @@ import {
   UsageError,
   formatUsage,
   parseCommand,
-  resolveRuntimeDefaults
+  resolveRuntimeDefaults,
 } from "./config";
 import {
   formatPromptDslMemory,
@@ -11,14 +11,14 @@ import {
   readMergedDslMemory,
   runDslCommand,
   type DslPromotionReview,
-  type DslThreadLearnReview
+  type DslThreadLearnReview,
 } from "./dsl-memory";
 import {
   summarizeBatch,
   summarizeDslPromotion,
   summarizeThreadLearn,
   summarizeTranslate,
-  summarizeWatch
+  summarizeWatch,
 } from "./llm";
 import { runOnboarding } from "./onboarding";
 import { DistillSession, type ProgressPhase } from "./stream-distiller";
@@ -27,7 +27,7 @@ import {
   getPersistedConfigValue,
   readPersistedConfig,
   resolveConfigPath,
-  setPersistedConfigValue
+  setPersistedConfigValue,
 } from "./user-config";
 
 async function readAllStdin(): Promise<string> {
@@ -82,7 +82,7 @@ async function run(): Promise<number> {
       autoLearnScope: defaults.autoLearnScope,
       autoLearnSource: defaults.autoLearnSource,
       autoPromoteScopes: defaults.autoPromoteScopes,
-      maxPromptDslEntries: defaults.maxPromptDslEntries
+      maxPromptDslEntries: defaults.maxPromptDslEntries,
     };
     process.stdout.write(
       await runDslCommand(command.args, {
@@ -95,9 +95,9 @@ async function run(): Promise<number> {
             entries
               .map(
                 (entry) =>
-                  `${entry.key}\t${entry.kind}\t${entry.meaning}\tuses=${entry.useCount}`
+                  `${entry.key}\t${entry.kind}\t${entry.meaning}\tuses=${entry.useCount}`,
               )
-              .join("\n")
+              .join("\n"),
           );
 
           return JSON.parse(response) as DslPromotionReview[];
@@ -105,18 +105,18 @@ async function run(): Promise<number> {
         threadLearnReviewer: async (request) => {
           const dslMemory = formatPromptDslMemory(
             request.dslMemory,
-            defaults.maxPromptDslEntries ?? 40
+            defaults.maxPromptDslEntries ?? 40,
           );
           const response = await summarizeThreadLearn(
             { ...runtimeConfig, question: "Review thread DSL candidates." },
             request.transcript,
             request.candidates,
-            dslMemory
+            dslMemory,
           );
 
           return JSON.parse(response) as DslThreadLearnReview[];
-        }
-      })
+        },
+      }),
     );
     return 0;
   }
@@ -133,8 +133,8 @@ async function run(): Promise<number> {
         `dataset-path=${persisted.datasetPath ?? ""}`,
         `auto-learn=${persisted.autoLearn ?? ""}`,
         `auto-promote-scopes=${persisted.autoPromoteScopes ?? ""}`,
-        `max-prompt-dsl-entries=${persisted.maxPromptDslEntries ?? ""}`
-      ].join("\n") + "\n"
+        `max-prompt-dsl-entries=${persisted.maxPromptDslEntries ?? ""}`,
+      ].join("\n") + "\n",
     );
     return 0;
   }
@@ -155,7 +155,7 @@ async function run(): Promise<number> {
     const output = await summarizeTranslate(
       command.config,
       command.text,
-      command.language
+      command.language,
     );
     process.stdout.write(`${output}\n`);
     return 0;
@@ -169,11 +169,11 @@ async function run(): Promise<number> {
   const mergedDslMemory = await readMergedDslMemory(
     process.env,
     process.cwd(),
-    undefined
+    undefined,
   );
   const promptDslMemory = formatPromptDslMemory(
     mergedDslMemory,
-    command.config.maxPromptDslEntries ?? 40
+    command.config.maxPromptDslEntries ?? 40,
   );
   const progress = progressProtocol
     ? undefined
@@ -197,12 +197,12 @@ async function run(): Promise<number> {
       summarizeBatch: (input) =>
         summarizeBatch(command.config, input, { dslMemory: promptDslMemory }),
       summarizeWatch: (previous, current) =>
-        summarizeWatch(command.config, previous, current)
+        summarizeWatch(command.config, previous, current),
     },
     runtimeConfig: command.config,
     dataset: {
       enabled: command.config.datasetEnabled,
-      path: resolveDatasetPath(process.env, command.config.datasetPath)
+      path: resolveDatasetPath(process.env, command.config.datasetPath),
     },
     stdout: process.stdout,
     stderr: process.stderr,
@@ -211,12 +211,13 @@ async function run(): Promise<number> {
     onProgressPhase: emitProgressPhase,
     onProgressStop: emitProgressStop,
     debug: command.config.debug === true,
-    onBatchOutput: command.config.autoLearn !== false
-      ? (output) =>
-          learnFromDistillOutput(process.env, process.cwd(), output, {
-            stack: undefined
-          }).then(() => undefined)
-      : undefined
+    onBatchOutput:
+      command.config.autoLearn !== false
+        ? (output) =>
+            learnFromDistillOutput(process.env, process.cwd(), output, {
+              stack: undefined,
+            }).then(() => undefined)
+        : undefined,
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -243,7 +244,7 @@ run()
     }
 
     process.stderr.write(
-      error instanceof Error ? `${error.message}\n` : "Unexpected error.\n"
+      error instanceof Error ? `${error.message}\n` : "Unexpected error.\n",
     );
     process.exit(1);
   });

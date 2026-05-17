@@ -24,8 +24,12 @@ const defaultAutoLearnConfig = {
 };
 
 describe("parseCommand", () => {
-  it("parses no arguments as onboarding", () => {
-    expect(parseCommand([], {}, {})).toEqual({ kind: "onboard" });
+  it("parses explicit onboarding", () => {
+    expect(parseCommand(["onboard"], {}, {})).toEqual({ kind: "onboard" });
+  });
+
+  it("rejects empty arguments", () => {
+    expect(() => parseCommand([], {}, {})).toThrow(UsageError);
   });
 
   it("parses dsl commands", () => {
