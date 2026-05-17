@@ -6,8 +6,13 @@ import {
   DEFAULT_AUTO_LEARN_SOURCE,
   DEFAULT_AUTO_PROMOTE_SCOPES,
   DEFAULT_HOST,
+  DEFAULT_LOCAL_BACKEND,
+  DEFAULT_LOCAL_CONCURRENCY,
+  DEFAULT_LOCAL_HOST,
+  DEFAULT_LOCAL_PORT,
   DEFAULT_MAX_PROMPT_DSL_ENTRIES,
   DEFAULT_MODEL,
+  DEFAULT_PROVIDER,
   DEFAULT_TIMEOUT_MS,
   UsageError,
   parseCommand,
@@ -22,6 +27,11 @@ const defaultAutoLearnConfig = {
   maxPromptDslEntries: DEFAULT_MAX_PROMPT_DSL_ENTRIES,
   debug: false
 };
+const expectedLocalModel =
+  process.platform === "darwin" && process.arch === "arm64"
+    ? "samuelfaj/distill-1.7B-4bit-MLX"
+    : "distill-local";
+const expectedLocalHost = `http://${DEFAULT_LOCAL_HOST}:${DEFAULT_LOCAL_PORT}/v1`;
 
 describe("parseCommand", () => {
   it("parses explicit onboarding", () => {
@@ -46,8 +56,13 @@ describe("parseCommand", () => {
       kind: "run",
       config: {
         question: "what changed?",
-        model: DEFAULT_MODEL,
-        host: DEFAULT_HOST,
+        provider: DEFAULT_PROVIDER,
+        localBackend: DEFAULT_LOCAL_BACKEND,
+        localConcurrency: DEFAULT_LOCAL_CONCURRENCY,
+        localHost: DEFAULT_LOCAL_HOST,
+        localPort: DEFAULT_LOCAL_PORT,
+        model: expectedLocalModel,
+        host: expectedLocalHost,
         apiKey: "",
         timeoutMs: DEFAULT_TIMEOUT_MS,
         datasetEnabled: true,
@@ -77,6 +92,11 @@ describe("parseCommand", () => {
       kind: "run",
       config: {
         question: "summarize",
+        provider: "external",
+        localBackend: DEFAULT_LOCAL_BACKEND,
+        localConcurrency: DEFAULT_LOCAL_CONCURRENCY,
+        localHost: DEFAULT_LOCAL_HOST,
+        localPort: DEFAULT_LOCAL_PORT,
         model: "mini",
         host: "http://example.test",
         apiKey: "secret",
@@ -95,8 +115,13 @@ describe("parseCommand", () => {
       kind: "run",
       config: {
         question: "summarize",
-        model: DEFAULT_MODEL,
-        host: DEFAULT_HOST,
+        provider: DEFAULT_PROVIDER,
+        localBackend: DEFAULT_LOCAL_BACKEND,
+        localConcurrency: DEFAULT_LOCAL_CONCURRENCY,
+        localHost: DEFAULT_LOCAL_HOST,
+        localPort: DEFAULT_LOCAL_PORT,
+        model: expectedLocalModel,
+        host: expectedLocalHost,
         apiKey: "",
         timeoutMs: DEFAULT_TIMEOUT_MS,
         datasetEnabled: true,
@@ -114,8 +139,13 @@ describe("parseCommand", () => {
       language: "en-US",
       config: {
         question: "Translate /distill output into human language.",
-        model: DEFAULT_MODEL,
-        host: DEFAULT_HOST,
+        provider: DEFAULT_PROVIDER,
+        localBackend: DEFAULT_LOCAL_BACKEND,
+        localConcurrency: DEFAULT_LOCAL_CONCURRENCY,
+        localHost: DEFAULT_LOCAL_HOST,
+        localPort: DEFAULT_LOCAL_PORT,
+        model: expectedLocalModel,
+        host: expectedLocalHost,
         apiKey: "",
         timeoutMs: DEFAULT_TIMEOUT_MS,
         datasetEnabled: true,
@@ -132,8 +162,13 @@ describe("parseCommand", () => {
       language: "pt-BR",
       config: {
         question: "Translate /distill output into human language.",
-        model: DEFAULT_MODEL,
-        host: DEFAULT_HOST,
+        provider: DEFAULT_PROVIDER,
+        localBackend: DEFAULT_LOCAL_BACKEND,
+        localConcurrency: DEFAULT_LOCAL_CONCURRENCY,
+        localHost: DEFAULT_LOCAL_HOST,
+        localPort: DEFAULT_LOCAL_PORT,
+        model: expectedLocalModel,
+        host: expectedLocalHost,
         apiKey: "",
         timeoutMs: DEFAULT_TIMEOUT_MS,
         datasetEnabled: true,
@@ -161,14 +196,38 @@ describe("parseCommand", () => {
       kind: "run",
       config: {
         question: "summarize",
-        model: "saved-model",
-        host: "http://saved.test",
-        apiKey: "saved-key",
+        provider: "local",
+        localBackend: DEFAULT_LOCAL_BACKEND,
+        localConcurrency: DEFAULT_LOCAL_CONCURRENCY,
+        localHost: DEFAULT_LOCAL_HOST,
+        localPort: DEFAULT_LOCAL_PORT,
+        model: expectedLocalModel,
+        host: expectedLocalHost,
+        apiKey: "",
         timeoutMs: 50,
         datasetEnabled: false,
         datasetPath: "/tmp/distill.jsonl",
         ...defaultAutoLearnConfig
       }
+    });
+  });
+
+  it("treats stale persisted provider names as local defaults instead of blocking the CLI", () => {
+    expect(
+      resolveRuntimeDefaults(
+        {},
+        {
+          provider: "openai-compatible" as "local",
+          model: "saved-model",
+          host: "http://saved.test",
+          apiKey: "saved-key"
+        }
+      )
+    ).toMatchObject({
+      provider: "local",
+      model: expectedLocalModel,
+      host: expectedLocalHost,
+      apiKey: ""
     });
   });
 
@@ -179,6 +238,11 @@ describe("parseCommand", () => {
           DISTILL_MODEL: "env-model",
           DISTILL_HOST: "http://env.test",
           DISTILL_API_KEY: "env-key",
+      DISTILL_PROVIDER: "external",
+      DISTILL_LOCAL_BACKEND: "llamacpp",
+      DISTILL_LOCAL_CONCURRENCY: "7",
+      DISTILL_LOCAL_HOST: "127.0.0.2",
+      DISTILL_LOCAL_PORT: "8011",
       DISTILL_TIMEOUT_MS: "999",
       DISTILL_DATASET_ENABLED: "false",
       DISTILL_DATASET_PATH: "/tmp/env-distill.jsonl",
@@ -196,6 +260,11 @@ describe("parseCommand", () => {
         }
       )
     ).toEqual({
+      provider: "external",
+      localBackend: "llamacpp",
+      localConcurrency: 7,
+      localHost: "127.0.0.2",
+      localPort: 8011,
       model: "env-model",
       host: "http://env.test",
       apiKey: "env-key",
@@ -216,7 +285,57 @@ describe("parseCommand", () => {
     expect(resolveRuntimeDefaults({ DISTILL_DEBUG: "true" }, {}).debug).toBe(true);
   });
 
+  it("treats legacy external env overrides as external even when persisted provider is local", () => {
+    expect(
+      resolveRuntimeDefaults(
+        {
+          DISTILL_HOST: "http://env.test",
+          DISTILL_MODEL: "env-model"
+        },
+        {
+          provider: "local",
+          host: "http://saved.test",
+          model: "saved-model"
+        }
+      )
+    ).toMatchObject({
+      provider: "external",
+      host: "http://env.test",
+      model: "env-model"
+    });
+  });
+
   it("parses config set commands", () => {
+    expect(parseCommand(["config", "provider", "external"], {}, {})).toEqual({
+      kind: "configSet",
+      key: "provider",
+      value: "external"
+    });
+
+    expect(parseCommand(["config", "local-backend", "mlx"], {}, {})).toEqual({
+      kind: "configSet",
+      key: "local-backend",
+      value: "mlx"
+    });
+
+    expect(parseCommand(["config", "local-concurrency", "9"], {}, {})).toEqual({
+      kind: "configSet",
+      key: "local-concurrency",
+      value: 9
+    });
+
+    expect(parseCommand(["config", "local-host", "127.0.0.9"], {}, {})).toEqual({
+      kind: "configSet",
+      key: "local-host",
+      value: "127.0.0.9"
+    });
+
+    expect(parseCommand(["config", "local-port", "8019"], {}, {})).toEqual({
+      kind: "configSet",
+      key: "local-port",
+      value: 8019
+    });
+
     expect(parseCommand(["config", "model", "my-model"], {}, {})).toEqual({
       kind: "configSet",
       key: "model",
@@ -271,7 +390,16 @@ describe("parseCommand", () => {
   });
 
   it("rejects unknown config keys", () => {
+    expect(() => parseCommand(["config", "unknown-provider", "openai"], {}, {})).toThrow(
+      UsageError
+    );
+  });
+
+  it("rejects invalid provider and local backend values", () => {
     expect(() => parseCommand(["config", "provider", "openai"], {}, {})).toThrow(
+      UsageError
+    );
+    expect(() => parseCommand(["config", "local-backend", "ollama"], {}, {})).toThrow(
       UsageError
     );
   });

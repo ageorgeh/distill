@@ -88,6 +88,16 @@ export async function setPersistedConfigValue(
 
   if (key === "timeout-ms") {
     current.timeoutMs = Number(value);
+  } else if (key === "provider") {
+    current.provider = String(value) as PersistedConfig["provider"];
+  } else if (key === "local-backend") {
+    current.localBackend = String(value) as PersistedConfig["localBackend"];
+  } else if (key === "local-concurrency") {
+    current.localConcurrency = Number(value);
+  } else if (key === "local-host") {
+    current.localHost = String(value);
+  } else if (key === "local-port") {
+    current.localPort = Number(value);
   } else if (key === "dataset-enabled") {
     current.datasetEnabled = Boolean(value);
   } else if (key === "dataset-path") {
@@ -116,6 +126,26 @@ export function getPersistedConfigValue(
 ): string | number | undefined {
   if (key === "timeout-ms") {
     return config.timeoutMs;
+  }
+
+  if (key === "provider") {
+    return config.provider;
+  }
+
+  if (key === "local-backend") {
+    return config.localBackend;
+  }
+
+  if (key === "local-concurrency") {
+    return config.localConcurrency;
+  }
+
+  if (key === "local-host") {
+    return config.localHost;
+  }
+
+  if (key === "local-port") {
+    return config.localPort;
   }
 
   if (key === "dataset-enabled") {

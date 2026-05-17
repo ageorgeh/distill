@@ -13,9 +13,12 @@
     "release:check": "bun run scripts/release-check.ts",
     "verify": "pnpm run test && pnpm run build && pnpm run release:check"
   },
-  "version": "1.4.9",
+  "version": "1.5.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/samuelfaj/distill"
+  },
+  "devDependencies": {
+    "@clack/prompts": "0.11.0"
   }
 }

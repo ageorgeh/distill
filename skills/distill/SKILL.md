@@ -169,9 +169,11 @@ R missing token => merge blocked
 
 Every thread must use DSL/Dict when it helps compression.
 Start with `Dict:` when meanings are not already shared.
+Before every visible response, scan the visible transcript plus the draft response for repeated stable terms that would compress well.
 Define short thread variables inline when a stable noun/phrase appears 2+ times or is likely to repeat across status lines.
 Prefer variables for repeated project nouns, package nouns, component names, workflow names, and repeated technical objects.
 The model chooses the variables dynamically from the current task; there is no fixed variable list.
+Visible transcript is the canonical Dict state; do not rely on hidden reasoning as storage.
 At each new response, update `Dict:` only with newly introduced variables.
 Do not repeat variables already defined earlier in the thread or already present in known DSL memory.
 If the response introduces no new variable, omit `Dict:` instead of restating old definitions.

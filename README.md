@@ -58,6 +58,14 @@ After onboarding you can use `/distill` in Claude/Codex to make the agent keep t
 
 It should not return your prompt rewritten. It should adopt the language structure and keep using it.
 
+## Our Model
+
+Distill uses it's own **Expert Language Model** 
+
+https://huggingface.co/samuelfaj/distill-1.7B-MLX
+
+**Only: 1.7B - 4bit**
+
 `/distill` uses English Military English + AR-0/AR-1 plus shared DSL memory with tiny keys:
 
 - fixed prefixes: `S` state, `C` cause/context, `D` action/decision, `R` risk, `O` outcome, `N` no-go, `P` proof/pass
@@ -122,6 +130,8 @@ Debug logs go to `stderr` with prefix `distill: debug:` and reason keys like:
 
 **Recommended LLM: qwen3.5-4b**
 
+Safe recommendation: machine should have 8 GB+ RAM; 16 GB+ is comfortable.
+
 ## Example
 
 ```sh
@@ -131,3 +141,9 @@ rg -n "terminal|PERMISSION|permission|Permissions|Plan|full access|default" desk
 - **Before:** [7648 tokens 30592 characters 10218 words](./examples/1/BEFORE.md)
 - **After:** [99 tokens 396 characters 57 words](./examples/1/AFTER.md)
 - **🔥 Saved ~98.7% tokens**
+
+## Distill Language
+
+We also teach your LLM to talk and think a more efficient way.
+
+![Distill Language](https://github.com/samuelfaj/distill/blob/main/examples/distill-language.png?raw=true)

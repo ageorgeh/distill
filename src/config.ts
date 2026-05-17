@@ -5,6 +5,13 @@ export const DISTILL_VERSION = cliPackage.version;
 export const DEFAULT_MODEL = "qwen3.5:4b";
 export const DEFAULT_HOST = "http://127.0.0.1:11434/v1";
 export const DEFAULT_TIMEOUT_MS = 90_000;
+export const DEFAULT_PROVIDER = "local";
+export const DEFAULT_LOCAL_BACKEND = "auto";
+export const DEFAULT_LOCAL_CONCURRENCY = 5;
+export const DEFAULT_LOCAL_HOST = "127.0.0.1";
+export const DEFAULT_LOCAL_PORT = 8009;
+export const DISTILL_MLX_MODEL = "samuelfaj/distill-1.7B-4bit-MLX";
+export const DISTILL_LLAMA_MODEL = "distill-local";
 export const DEFAULT_IDLE_MS = 1_200;
 export const DEFAULT_INTERACTIVE_GAP_MS = 180;
 export const DEFAULT_PROGRESS_FRAME_MS = 120;
@@ -15,7 +22,15 @@ export const DEFAULT_AUTO_LEARN_SOURCE = "output";
 export const DEFAULT_AUTO_PROMOTE_SCOPES = true;
 export const DEFAULT_MAX_PROMPT_DSL_ENTRIES = 40;
 
+export type Provider = "local" | "external";
+export type LocalBackend = "auto" | "mlx" | "llamacpp";
+
 export interface DistillSettings {
+  provider: Provider;
+  localBackend: LocalBackend;
+  localConcurrency: number;
+  localHost: string;
+  localPort: number;
   model: string;
   host: string;
   apiKey: string;
@@ -37,6 +52,11 @@ export interface RuntimeConfig extends DistillSettings {
 export type PersistedConfig = Partial<DistillSettings>;
 
 export type ConfigKey =
+  | "provider"
+  | "local-backend"
+  | "local-concurrency"
+  | "local-host"
+  | "local-port"
   | "model"
   | "host"
   | "api-key"
@@ -113,6 +133,16 @@ function normalizeHost(input: string | undefined): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
 
+function normalizeLocalHost(input: string | undefined): string {
+  const value = (input ?? DEFAULT_LOCAL_HOST).trim();
+
+  if (!value) {
+    throw new UsageError("local-host cannot be empty.");
+  }
+
+  return value;
+}
+
 function coerceBoolean(input: string | boolean | undefined): boolean {
   if (typeof input === "boolean") {
     return input;
@@ -154,15 +184,117 @@ function coercePositiveInteger(
   return value;
 }
 
+function coercePort(input: string | number | undefined, label: string): number {
+  const value = coercePositiveInteger(input, label);
+
+  if (value > 65_535) {
+    throw new UsageError(`${label} must be between 1 and 65535.`);
+  }
+
+  return value;
+}
+
+function coerceProvider(input: string | undefined): Provider {
+  const value = (input ?? DEFAULT_PROVIDER).trim().toLowerCase();
+
+  if (value === "local" || value === "external") {
+    return value;
+  }
+
+  throw new UsageError("provider must be local or external.");
+}
+
+function coercePersistedProvider(input: string | undefined): Provider {
+  try {
+    return coerceProvider(input);
+  } catch {
+    return DEFAULT_PROVIDER;
+  }
+}
+
+function coerceLocalBackend(input: string | undefined): LocalBackend {
+  const value = (input ?? DEFAULT_LOCAL_BACKEND).trim().toLowerCase();
+
+  if (value === "auto" || value === "mlx" || value === "llamacpp") {
+    return value;
+  }
+
+  throw new UsageError("local-backend must be auto, mlx, or llamacpp.");
+}
+
+function coercePersistedLocalBackend(input: string | undefined): LocalBackend {
+  try {
+    return coerceLocalBackend(input);
+  } catch {
+    return DEFAULT_LOCAL_BACKEND;
+  }
+}
+
+function localBackendForPlatform(
+  backend: LocalBackend,
+  platform = process.platform,
+  arch = process.arch
+): Exclude<LocalBackend, "auto"> {
+  if (backend !== "auto") {
+    return backend;
+  }
+
+  return platform === "darwin" && arch === "arm64" ? "mlx" : "llamacpp";
+}
+
+function resolveLocalModel(
+  backend: LocalBackend,
+  platform = process.platform,
+  arch = process.arch
+): string {
+  return localBackendForPlatform(backend, platform, arch) === "mlx"
+    ? DISTILL_MLX_MODEL
+    : DISTILL_LLAMA_MODEL;
+}
+
+function resolveLocalHost(localHost: string, localPort: number): string {
+  return `http://${localHost}:${localPort}/v1`;
+}
+
 export function resolveRuntimeDefaults(
   env: NodeJS.ProcessEnv,
   persisted: PersistedConfig,
 ): DistillSettings {
-  const model = env.DISTILL_MODEL ?? persisted.model ?? DEFAULT_MODEL;
-  const host = normalizeHost(
-    env.DISTILL_HOST ?? persisted.host ?? DEFAULT_HOST,
+  const hasExternalEnv = Boolean(
+    env.DISTILL_HOST || env.DISTILL_MODEL || env.DISTILL_API_KEY
   );
-  const apiKey = env.DISTILL_API_KEY ?? persisted.apiKey ?? "";
+  const provider = env.DISTILL_PROVIDER
+    ? coerceProvider(env.DISTILL_PROVIDER)
+    : hasExternalEnv
+      ? "external"
+    : persisted.provider
+      ? coercePersistedProvider(persisted.provider)
+      : DEFAULT_PROVIDER;
+  const localBackend = env.DISTILL_LOCAL_BACKEND
+    ? coerceLocalBackend(env.DISTILL_LOCAL_BACKEND)
+    : coercePersistedLocalBackend(persisted.localBackend);
+  const localConcurrency = coercePositiveInteger(
+    env.DISTILL_LOCAL_CONCURRENCY ??
+      persisted.localConcurrency ??
+      DEFAULT_LOCAL_CONCURRENCY,
+    "local-concurrency"
+  );
+  const localHost = normalizeLocalHost(
+    env.DISTILL_LOCAL_HOST ?? persisted.localHost ?? DEFAULT_LOCAL_HOST
+  );
+  const localPort = coercePort(
+    env.DISTILL_LOCAL_PORT ?? persisted.localPort ?? DEFAULT_LOCAL_PORT,
+    "local-port"
+  );
+  const model =
+    provider === "local"
+      ? resolveLocalModel(localBackend)
+      : env.DISTILL_MODEL ?? persisted.model ?? DEFAULT_MODEL;
+  const host =
+    provider === "local"
+      ? resolveLocalHost(localHost, localPort)
+      : normalizeHost(env.DISTILL_HOST ?? persisted.host ?? DEFAULT_HOST);
+  const apiKey = provider === "local" ? "" : env.DISTILL_API_KEY ?? persisted.apiKey ?? "";
   const timeoutMs = coerceTimeout(
     env.DISTILL_TIMEOUT_MS ?? String(persisted.timeoutMs ?? DEFAULT_TIMEOUT_MS),
   );
@@ -187,6 +319,11 @@ export function resolveRuntimeDefaults(
   const debug = coerceDebugBoolean(env.DISTILL_DEBUG);
 
   return {
+    provider,
+    localBackend,
+    localConcurrency,
+    localHost,
+    localPort,
     model,
     host,
     apiKey,
@@ -213,6 +350,11 @@ function parseConfigCommand(argv: string[]): Command {
     ![
       "model",
       "host",
+      "provider",
+      "local-backend",
+      "local-concurrency",
+      "local-host",
+      "local-port",
       "api-key",
       "timeout-ms",
       "dataset-enabled",
@@ -240,6 +382,46 @@ function parseConfigCommand(argv: string[]): Command {
       kind: "configSet",
       key,
       value: coerceTimeout(rawValue),
+    };
+  }
+
+  if (key === "provider") {
+    return {
+      kind: "configSet",
+      key,
+      value: coerceProvider(rawValue)
+    };
+  }
+
+  if (key === "local-backend") {
+    return {
+      kind: "configSet",
+      key,
+      value: coerceLocalBackend(rawValue)
+    };
+  }
+
+  if (key === "local-concurrency") {
+    return {
+      kind: "configSet",
+      key,
+      value: coercePositiveInteger(rawValue, key)
+    };
+  }
+
+  if (key === "local-host") {
+    return {
+      kind: "configSet",
+      key,
+      value: normalizeLocalHost(rawValue)
+    };
+  }
+
+  if (key === "local-port") {
+    return {
+      kind: "configSet",
+      key,
+      value: coercePort(rawValue, key)
     };
   }
 
@@ -324,6 +506,11 @@ export function parseCommand(
       language: argv[2] ?? "en-US",
       config: {
         question: "Translate /distill output into human language.",
+        provider: defaults.provider,
+        localBackend: defaults.localBackend,
+        localConcurrency: defaults.localConcurrency,
+        localHost: defaults.localHost,
+        localPort: defaults.localPort,
         model: defaults.model,
         host: defaults.host,
         apiKey: defaults.apiKey,
@@ -401,14 +588,30 @@ export function parseCommand(
     throw new UsageError("A question is required.");
   }
 
-  const model = modelOverride ?? defaults.model;
-  const host = hostOverride ? normalizeHost(hostOverride) : defaults.host;
-  const apiKey = apiKeyOverride ?? defaults.apiKey;
+  const provider =
+    modelOverride || hostOverride || apiKeyOverride ? "external" : defaults.provider;
+  const model =
+    provider === "external"
+      ? modelOverride ?? env.DISTILL_MODEL ?? persisted.model ?? DEFAULT_MODEL
+      : defaults.model;
+  const host =
+    provider === "external"
+      ? normalizeHost(hostOverride ?? env.DISTILL_HOST ?? persisted.host ?? DEFAULT_HOST)
+      : defaults.host;
+  const apiKey =
+    provider === "external"
+      ? apiKeyOverride ?? env.DISTILL_API_KEY ?? persisted.apiKey ?? ""
+      : "";
 
   return {
     kind: "run",
     config: {
       question,
+      provider,
+      localBackend: defaults.localBackend,
+      localConcurrency: defaults.localConcurrency,
+      localHost: defaults.localHost,
+      localPort: defaults.localPort,
       model,
       host,
       apiKey,
@@ -438,14 +641,22 @@ export function formatUsage(): string {
     '  distill translate "Best: Fix auth bug. Pass: tests pass." [language]',
     "  distill config host http://127.0.0.1:11434/v1",
     '  distill config model "qwen3.5:2b"',
+    "  distill config provider external",
+    "  distill config provider local",
     '  distill --host http://127.0.0.1:1234/v1 --model my-model "summarize"',
     "",
     "Options:",
-    `  --model <name>        Model name (default: ${DEFAULT_MODEL})`,
-    `  --host <url>          OpenAI-compatible base URL (default: ${DEFAULT_HOST})`,
+    `  --model <name>        External model name (default local model: ${DISTILL_MLX_MODEL})`,
+    `  --host <url>          External OpenAI-compatible base URL (default local: http://${DEFAULT_LOCAL_HOST}:${DEFAULT_LOCAL_PORT}/v1)`,
     "  --api-key <key>       API key (env: DISTILL_API_KEY)",
     `  --timeout-ms <ms>     Request timeout in milliseconds (default: ${DEFAULT_TIMEOUT_MS})`,
     "  --debug               Print fallback reasons to stderr (env: DISTILL_DEBUG=true)",
+    "",
+    "Local model defaults:",
+    `  DISTILL_PROVIDER=external        Use an external OpenAI-compatible API`,
+    `  DISTILL_LOCAL_BACKEND=mlx        Override local backend: auto, mlx, llamacpp`,
+    `  DISTILL_LOCAL_CONCURRENCY=5      Max concurrent local model requests`,
+    `  DISTILL_LOCAL_PORT=${DEFAULT_LOCAL_PORT}       Local model server port`,
     "",
     "Local fine-tuning capture (enabled by default):",
     "  Successful batch summaries are appended as JSONL under the config dir",

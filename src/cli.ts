@@ -72,6 +72,11 @@ async function run(): Promise<number> {
     const defaults = resolveRuntimeDefaults(process.env, persisted);
     const runtimeConfig = {
       question: "Review DSL memory.",
+      provider: defaults.provider,
+      localBackend: defaults.localBackend,
+      localConcurrency: defaults.localConcurrency,
+      localHost: defaults.localHost,
+      localPort: defaults.localPort,
       model: defaults.model,
       host: defaults.host,
       apiKey: defaults.apiKey,
@@ -125,6 +130,11 @@ async function run(): Promise<number> {
     process.stdout.write(
       [
         `path=${resolveConfigPath(process.env)}`,
+        `provider=${persisted.provider ?? ""}`,
+        `local-backend=${persisted.localBackend ?? ""}`,
+        `local-concurrency=${persisted.localConcurrency ?? ""}`,
+        `local-host=${persisted.localHost ?? ""}`,
+        `local-port=${persisted.localPort ?? ""}`,
         `model=${persisted.model ?? ""}`,
         `host=${persisted.host ?? ""}`,
         `api-key=${persisted.apiKey ? "***" : ""}`,

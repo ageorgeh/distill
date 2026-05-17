@@ -267,8 +267,10 @@ export function buildBatchPrompt(
 ): PromptMessages {
   const inlineVariableRules = [
     "Inline variable rule:",
+    "Before every visible response, scan the visible transcript plus the draft response for repeated stable terms that would compress well.",
     "When free-form /distill output is allowed and the same stable noun/phrase appears 2+ times, or will likely repeat across status lines, define it once as <term>=#<letter><digit> and then reuse the # key.",
     "Prefer inline variables for repeated project nouns, package nouns, component names, workflow names, and repeated technical objects.",
+    "Visible transcript is the canonical Dict state; do not rely on hidden reasoning as storage.",
     "Dict delta rule: each new response may update Dict only with newly introduced variables; do not repeat variables already defined earlier in the thread or known DSL memory.",
     "If no new variable is introduced in the response, omit Dict instead of restating old definitions.",
     "Substitution pass: after defining any Dict alias or inline variable, replace every later safe occurrence of that meaning with the alias/key.",

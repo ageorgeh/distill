@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Distill Local Model Analysis</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; color: #17202a; line-height: 1.4; }
+    main { max-width: 1024px; margin: 0 auto; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+    .card { border: 1px solid #d7dde5; border-radius: 8px; padding: 14px; background: #fbfcfe; }
+    .risk { border-left: 4px solid #b25e09; }
+    .ok { border-left: 4px solid #217346; }
+    table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+    th, td { border: 1px solid #d7dde5; padding: 8px; text-align: left; vertical-align: top; }
+    th { background: #f0f4f8; }
+    code { background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Implementation Analysis</h1>
+  <p><strong>Recommendation:</strong> add a narrow local-server boundary and keep the existing OpenAI-compatible request path unchanged after resolving local host/model.</p>
+  <div class="cards">
+    <div class="card ok"><strong>Config seam</strong><br><code>src/config.ts</code> owns runtime defaults and config keys.</div>
+    <div class="card ok"><strong>Persistence seam</strong><br><code>src/user-config.ts</code> maps config keys to JSON.</div>
+    <div class="card ok"><strong>Onboarding seam</strong><br><code>src/onboarding.ts</code> prompts and writes config.</div>
+    <div class="card ok"><strong>LLM seam</strong><br><code>src/llm.ts</code> can call <code>ensureLocalServer</code> before HTTP.</div>
+  </div>
+  <h2>Risk Matrix</h2>
+  <table>
+    <tr><th>Risk</th><th>Mitigation</th><th>Verification</th></tr>
+    <tr><td>Local server race across concurrent distill calls.</td><td>Use a config-dir lock file and re-probe after lock acquisition.</td><td>Unit test concurrent ensure path.</td></tr>
+    <tr><td>Port occupied by another service.</td><td>Probe OpenAI-compatible models endpoint and fail loud when incompatible.</td><td>Local-server test with incompatible probe.</td></tr>
+    <tr><td>Auto-install mutates machine unexpectedly.</td><td>Only install into user-local tool paths or distill runtime cache; expose exact error if unavailable.</td><td>Installer command tests with injected deps.</td></tr>
+    <tr><td>External API regression.</td><td>Provider explicit external bypasses local server manager.</td><td>LLM test asserts no local ensure.</td></tr>
+  </table>
+  <h2>Reviewer Notes</h2>
+  <div class="cards">
+    <div class="card"><strong>Product</strong><br>Default local model reduces setup burden; external remains explicit.</div>
+    <div class="card"><strong>Backend</strong><br>Keep server lifecycle in one module; avoid leaking process logic into prompt/session code.</div>
+    <div class="card"><strong>Testing</strong><br>Most proof belongs in config/local-server unit tests; no browser UI exists.</div>
+    <div class="card"><strong>Architecture</strong><br>No daemon supervisor or bundled model weights in this diff.</div>
+  </div>
+</main>
+</body>
+</html>

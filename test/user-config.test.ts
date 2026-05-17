@@ -30,18 +30,53 @@ describe("user config", () => {
         "dataset-path",
         "/tmp/distill.jsonl"
       );
+      await setPersistedConfigValue(
+        { DISTILL_CONFIG_PATH: configPath },
+        "provider",
+        "local"
+      );
+      await setPersistedConfigValue(
+        { DISTILL_CONFIG_PATH: configPath },
+        "local-backend",
+        "llamacpp"
+      );
+      await setPersistedConfigValue(
+        { DISTILL_CONFIG_PATH: configPath },
+        "local-concurrency",
+        5
+      );
+      await setPersistedConfigValue(
+        { DISTILL_CONFIG_PATH: configPath },
+        "local-host",
+        "127.0.0.1"
+      );
+      await setPersistedConfigValue(
+        { DISTILL_CONFIG_PATH: configPath },
+        "local-port",
+        8009
+      );
 
       expect(await readPersistedConfig({ DISTILL_CONFIG_PATH: configPath })).toEqual({
         model: "qwen3.5:2b",
         datasetEnabled: false,
-        datasetPath: "/tmp/distill.jsonl"
+        datasetPath: "/tmp/distill.jsonl",
+        provider: "local",
+        localBackend: "llamacpp",
+        localConcurrency: 5,
+        localHost: "127.0.0.1",
+        localPort: 8009
       });
 
       const raw = JSON.parse(await readFile(configPath, "utf8"));
       expect(raw).toEqual({
         model: "qwen3.5:2b",
         datasetEnabled: false,
-        datasetPath: "/tmp/distill.jsonl"
+        datasetPath: "/tmp/distill.jsonl",
+        provider: "local",
+        localBackend: "llamacpp",
+        localConcurrency: 5,
+        localHost: "127.0.0.1",
+        localPort: 8009
       });
     } finally {
       await rm(dir, { recursive: true, force: true });

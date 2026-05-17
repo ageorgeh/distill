@@ -150,7 +150,7 @@ describe("cli entrypoint", () => {
     }
   });
 
-  it("runs onboarding with config and skill install defaults", async () => {
+  it("runs onboarding with local model and skill install defaults", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "distill-onboarding-"));
     const home = path.join(dir, "home");
     const configPath = path.join(dir, "config.json");
@@ -172,8 +172,10 @@ describe("cli entrypoint", () => {
         cwd: root,
         encoding: "utf8",
         input: [
-          "http://127.0.0.1:1234/v1",
-          "local-model",
+          "",
+          "",
+          "",
+          "",
           "",
           "120000",
           ""
@@ -183,7 +185,8 @@ describe("cli entrypoint", () => {
           HOME: home,
           USERPROFILE: home,
           DISTILL_CONFIG_PATH: configPath,
-          DISTILL_PACKAGE_ROOT: root
+          DISTILL_PACKAGE_ROOT: root,
+          DISTILL_ONBOARDING_PRELOAD: "false"
         }
       });
 
@@ -191,8 +194,11 @@ describe("cli entrypoint", () => {
       expect(result.stdout).toContain("distill onboarding");
       expect(result.stdout).toContain("/distill skill installed for Codex and Claude");
       expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
-        host: "http://127.0.0.1:1234/v1",
-        model: "local-model",
+        provider: "local",
+        localBackend: "auto",
+        localConcurrency: 5,
+        localHost: "127.0.0.1",
+        localPort: 8009,
         timeoutMs: 120000
       });
       const dslMemory = JSON.parse(
@@ -255,6 +261,46 @@ describe("cli entrypoint", () => {
           'terraform plan 2>&1 | distill "Is this safe? Return SAFE, REVIEW, or UNSAFE'
         );
       }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("runs onboarding with external API config when explicitly selected", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "distill-onboarding-external-"));
+    const home = path.join(dir, "home");
+    const configPath = path.join(dir, "config.json");
+
+    try {
+      const result = spawnSync("bun", ["run", cli], {
+        cwd: root,
+        encoding: "utf8",
+        input: [
+          "external",
+          "http://127.0.0.1:1234/v1",
+          "external-model",
+          "test-key",
+          "120000",
+          "n"
+        ].join("\n"),
+        env: {
+          ...process.env,
+          HOME: home,
+          USERPROFILE: home,
+          DISTILL_CONFIG_PATH: configPath,
+          DISTILL_PACKAGE_ROOT: root
+        }
+      });
+
+      expect(result.status).toBe(0);
+      expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
+        provider: "external",
+        host: "http://127.0.0.1:1234/v1",
+        model: "external-model",
+        apiKey: "test-key",
+        timeoutMs: 120000
+      });
+      expect(result.stdout).toContain("skill install skipped");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

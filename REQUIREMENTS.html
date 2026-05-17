@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Distill Local Model Requirements</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; line-height: 1.4; color: #17202a; }
+    header, section { max-width: 980px; margin: 0 auto 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .card { border: 1px solid #d7dde5; border-radius: 8px; padding: 14px; background: #fbfcfe; }
+    .ok { border-left: 4px solid #217346; }
+    .risk { border-left: 4px solid #b25e09; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #d7dde5; padding: 8px; text-align: left; vertical-align: top; }
+    th { background: #f0f4f8; }
+    code { background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Distill Local Model Onboarding</h1>
+    <p><strong>TL;DR:</strong> make Distill default to its own local model, start the local OpenAI-compatible server on demand, and keep external APIs available through explicit config.</p>
+  </header>
+  <section class="grid">
+    <div class="card ok"><strong>Default</strong><br>Provider defaults to <code>local</code> for fresh and existing config resolution.</div>
+    <div class="card ok"><strong>Mac</strong><br>Apple Silicon uses MLX model <code>samuelfaj/distill-1.7B-4bit-MLX</code>.</div>
+    <div class="card ok"><strong>Other OS</strong><br>Linux, Windows, and non-Apple-Silicon Mac use llama.cpp GGUF.</div>
+    <div class="card risk"><strong>Concurrency</strong><br>Default max concurrent local requests is <code>5</code>, configurable.</div>
+  </section>
+  <section>
+    <h2>Acceptance Criteria</h2>
+    <table>
+      <tr><th>Requirement</th><th>Status</th><th>Proof Target</th></tr>
+      <tr><td>Onboarding offers local model and external API.</td><td>Confirmed</td><td>CLI entry test</td></tr>
+      <tr><td>Local model is default.</td><td>Confirmed</td><td>Config default test</td></tr>
+      <tr><td>External API still works when explicitly selected.</td><td>Confirmed</td><td>Config + LLM test</td></tr>
+      <tr><td>Local server starts before local LLM calls.</td><td>Confirmed</td><td>LLM/local-server tests</td></tr>
+      <tr><td>Runtime auto-install attempts when missing.</td><td>Confirmed</td><td>Local-server install tests</td></tr>
+      <tr><td>Mac uses MLX; Linux/Windows use llama.cpp.</td><td>Confirmed</td><td>Backend selection tests</td></tr>
+      <tr><td>Concurrency defaults to 5 and is configurable.</td><td>Confirmed</td><td>Config + args tests</td></tr>
+    </table>
+  </section>
+  <section>
+    <h2>Scope</h2>
+    <div class="grid">
+      <div class="card"><strong>In scope</strong><br>Config keys, env overrides, onboarding, local server manager, runtime command construction, unit/integration tests.</div>
+      <div class="card"><strong>Out of scope</strong><br>Bundling model weights, adding a UI, production service management, changing prompt rules.</div>
+    </div>
+  </section>
+  <section>
+    <h2>Decision Log</h2>
+    <ul>
+      <li>User chose MLX on Mac and llama.cpp elsewhere.</li>
+      <li>User chose auto-install when runtime is missing.</li>
+      <li>User chose forcing local default unless <code>provider=external</code>.</li>
+    </ul>
+  </section>
+</body>
+</html>

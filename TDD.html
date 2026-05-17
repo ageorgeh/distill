@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Distill Local Model TDD Plan</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; color: #17202a; line-height: 1.4; }
+    main { max-width: 1000px; margin: 0 auto; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #d7dde5; padding: 8px; text-align: left; vertical-align: top; }
+    th { background: #f0f4f8; }
+    .lane { border: 1px solid #d7dde5; border-radius: 8px; padding: 14px; margin: 12px 0; background: #fbfcfe; }
+    code { background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>TDD Control Panel</h1>
+  <p><strong>Red target:</strong> add tests for provider defaults, onboarding provider selection, local server startup, install path, and backend command args before production code.</p>
+  <table>
+    <tr><th>Test Area</th><th>Intent</th><th>Expected Red Reason</th></tr>
+    <tr><td>Config</td><td>Local provider is the default user experience.</td><td>No provider/local config keys exist.</td></tr>
+    <tr><td>Onboarding</td><td>User can choose local or external without losing skill install flow.</td><td>Onboarding only asks raw host/model.</td></tr>
+    <tr><td>LLM</td><td>Local provider starts server before API calls; external bypasses it.</td><td><code>chatCompletion</code> has no local server hook.</td></tr>
+    <tr><td>Local server</td><td>Server args encode backend/concurrency contract.</td><td>Module does not exist.</td></tr>
+  </table>
+  <div class="lane"><strong>Red:</strong> write tests and run targeted suite.</div>
+  <div class="lane"><strong>Green:</strong> implement smallest config/onboarding/local-server changes.</div>
+  <div class="lane"><strong>Refactor:</strong> keep process/runtime helpers isolated and testable through injected deps.</div>
+  <div class="lane"><strong>Final:</strong> run targeted suite, full <code>bun test</code>, build, verify.</div>
+</main>
+</body>
+</html>

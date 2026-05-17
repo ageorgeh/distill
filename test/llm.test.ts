@@ -10,6 +10,11 @@ import type { RuntimeConfig } from "../src/config";
 
 const baseConfig: RuntimeConfig = {
   question: "Did tests pass? Return PASS or FAIL.",
+  provider: "external",
+  localBackend: "auto",
+  localConcurrency: 5,
+  localHost: "127.0.0.1",
+  localPort: 8009,
   model: "qwen3.5:2b",
   host: "http://127.0.0.1:11434/v1",
   apiKey: "",
@@ -140,6 +145,95 @@ describe("chatCompletion", () => {
 });
 
 describe("summarizeBatch", () => {
+  it("starts the local server before sending local-provider requests", async () => {
+    const events: string[] = [];
+
+    const output = await summarizeBatch(
+      {
+        ...baseConfig,
+        provider: "local",
+        model: "samuelfaj/distill-1.7B-4bit-MLX",
+        host: "http://127.0.0.1:8009/v1"
+      },
+      "1 passed",
+      {
+        ensureLocalServer: async (config) => {
+          events.push(`${config.provider}:${config.localBackend}`);
+        }
+      },
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "PASS" } }]
+          }),
+          { status: 200 }
+        )
+    );
+
+    expect(output).toBe("PASS");
+    expect(events).toEqual(["local:auto"]);
+  });
+
+  it("does not start the local server for explicitly external requests", async () => {
+    const events: string[] = [];
+
+    await summarizeBatch(
+      baseConfig,
+      "1 passed",
+      {
+        ensureLocalServer: async () => {
+          events.push("unexpected");
+        }
+      },
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "PASS" } }]
+          }),
+          { status: 200 }
+        )
+    );
+
+    expect(events).toEqual([]);
+  });
+
+  it("limits concurrent local-provider HTTP requests to local-concurrency", async () => {
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+
+    await Promise.all(
+      Array.from({ length: 5 }, (_, index) =>
+        summarizeBatch(
+          {
+            ...baseConfig,
+            provider: "local",
+            localConcurrency: 2,
+            host: "http://127.0.0.1:8009/v1"
+          },
+          `input ${index}`,
+          {
+            ensureLocalServer: async () => undefined
+          },
+          async () => {
+            activeRequests += 1;
+            maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            activeRequests -= 1;
+
+            return new Response(
+              JSON.stringify({
+                choices: [{ message: { content: "PASS" } }]
+              }),
+              { status: 200 }
+            );
+          }
+        )
+      )
+    );
+
+    expect(maxActiveRequests).toBe(2);
+  });
+
   it("sends the batch prompt with config-derived params", async () => {
     let requestBody: unknown;
 
@@ -167,7 +261,7 @@ describe("summarizeBatch", () => {
     };
     expect(body.model).toBe("qwen3.5:2b");
     expect(body.temperature).toBe(0);
-    expect(body.max_tokens).toBeUndefined();
+    expect(body.max_tokens).toBe(512);
     expect(body.messages[0].role).toBe("system");
     expect(body.messages[1].role).toBe("user");
     expect(body.messages[1].content).toContain("1 passed");
@@ -198,9 +292,12 @@ describe("summarizeBatch", () => {
 
     expect(output).toContain("#c1");
     expect(body.messages[0].content).toContain("Inline variable rule");
+    expect(body.messages[0].content).toContain("Before every visible response");
+    expect(body.messages[0].content).toContain("visible transcript plus the draft response");
     expect(body.messages[0].content).toContain("appears 2+ times");
     expect(body.messages[0].content).toContain("<term>=#<letter><digit>");
     expect(body.messages[0].content).toContain("project nouns");
+    expect(body.messages[0].content).toContain("Visible transcript is the canonical Dict state");
     expect(body.messages[0].content).toContain("Dict delta rule");
     expect(body.messages[0].content).toContain("only with newly introduced variables");
     expect(body.messages[0].content).toContain("omit Dict instead of restating old definitions");
@@ -239,6 +336,8 @@ describe("summarizeBatch", () => {
       "AUTH = authentication fix (alias, project)"
     );
     expect(body.messages[0].content).toContain("Inline variable rule");
+    expect(body.messages[0].content).toContain("Before every visible response");
+    expect(body.messages[0].content).toContain("Visible transcript is the canonical Dict state");
     expect(body.messages[0].content).toContain("<term>=#<letter><digit>");
     expect(body.messages[0].content).toContain("Dict delta rule");
     expect(body.messages[0].content).toContain("do not repeat variables already defined");

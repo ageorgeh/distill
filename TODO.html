@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Distill Local Model TODO</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; color: #17202a; line-height: 1.4; }
+    main { max-width: 900px; margin: 0 auto; }
+    .lane { border: 1px solid #d7dde5; border-radius: 8px; padding: 14px; margin: 12px 0; background: #fbfcfe; }
+    li { margin: 6px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Task Board</h1>
+  <div class="lane">
+    <h2>Discovery</h2>
+    <ul>
+      <li>Confirm current config/onboarding/LLM seams.</li>
+      <li>Preserve unrelated dirty prompt/skill changes.</li>
+    </ul>
+  </div>
+  <div class="lane">
+    <h2>TDD</h2>
+    <ul>
+      <li>Add config tests for local provider defaults and env/config keys.</li>
+      <li>Add onboarding tests for local and external paths.</li>
+      <li>Add local-server tests for backend selection, install, lock/reuse, args.</li>
+      <li>Add LLM tests for local ensure and external bypass.</li>
+    </ul>
+  </div>
+  <div class="lane">
+    <h2>Implementation</h2>
+    <ul>
+      <li>Extend config and persisted config mapping.</li>
+      <li>Add local server manager.</li>
+      <li>Wire local ensure into LLM calls.</li>
+      <li>Update onboarding and usage text.</li>
+    </ul>
+  </div>
+  <div class="lane">
+    <h2>Validation</h2>
+    <ul>
+      <li>Run targeted tests, full tests, build, verify.</li>
+      <li>Run review and coverage gates.</li>
+      <li>Document Playwright/demo non-app applicability unless a browser surface appears.</li>
+    </ul>
+  </div>
+</main>
+</body>
+</html>
