@@ -1,11 +1,19 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { tmpdir } from "node:os";
+
 import { describe, expect, it } from "bun:test";
 
 import type { RuntimeConfig } from "../src/config";
 import {
   buildLocalServerArgs,
   ensureLocalServer,
+  manualLlamaInstallCommand,
+  reclaimStaleStartupLock,
   resolveLocalBackend
 } from "../src/local-server";
+
+const itLinuxOnly = process.platform === "linux" ? it : it.skip;
 
 function localConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
   return {
@@ -64,6 +72,15 @@ describe("local server backend selection", () => {
       "--alias",
       "distill-local"
     ]);
+  });
+
+  it("suggests installing llama-cpp on Nix-like environments", () => {
+    expect(
+      manualLlamaInstallCommand(
+        { HOME: "/home/alex", NIX_PROFILES: "/nix/var/nix/profiles/default" },
+        "linux"
+      )
+    ).toBe("install the `llama-cpp` package and ensure `llama-server` is on PATH");
   });
 });
 
@@ -132,5 +149,38 @@ describe("ensureLocalServer", () => {
         spawnServer: async () => undefined
       })
     ).rejects.toThrow("127.0.0.1:8009");
+  });
+
+  it("reclaims a stale startup lock left by a dead process", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "distill-lock-"));
+    const configDir = path.join(root, ".config");
+    const lockPath = path.join(configDir, "distill", "local-server.lock");
+
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, "999999\n");
+
+    try {
+      expect(await reclaimStaleStartupLock(lockPath)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  itLinuxOnly("reclaims a stale startup lock when the pid was reused", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "distill-lock-"));
+    const configDir = path.join(root, ".config");
+    const lockPath = path.join(configDir, "distill", "local-server.lock");
+
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(
+      lockPath,
+      JSON.stringify({ pid: process.pid, startTimeTicks: "0" })
+    );
+
+    try {
+      expect(await reclaimStaleStartupLock(lockPath)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

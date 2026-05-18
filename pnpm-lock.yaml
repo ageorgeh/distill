@@ -6,7 +6,11 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      '@clack/prompts':
+        specifier: 0.11.0
+        version: 0.11.0
 
   packages/cli:
     devDependencies:
@@ -15,17 +19,17 @@ importers:
         version: 25.7.0
     optionalDependencies:
       '@samuelfaj/distill-darwin-arm64':
-        specifier: 1.4.9
-        version: 1.4.9
+        specifier: 1.5.2
+        version: 1.5.2
       '@samuelfaj/distill-darwin-x64':
-        specifier: 1.4.9
-        version: 1.4.9
+        specifier: 1.5.2
+        version: 1.5.2
       '@samuelfaj/distill-linux-arm64':
-        specifier: 1.4.9
-        version: 1.4.9
+        specifier: 1.5.2
+        version: 1.5.2
       '@samuelfaj/distill-linux-x64':
-        specifier: 1.4.9
-        version: 1.4.9
+        specifier: 1.5.2
+        version: 1.5.2
 
   packages/distill-darwin-arm64: {}
 
@@ -39,48 +43,75 @@ importers:
 
 packages:
 
-  '@samuelfaj/distill-darwin-arm64@1.4.9':
-    resolution: {integrity: sha512-djkUJyYynxye97WcWAtiMM0UroZieFfqtiOitQznVnQ0goETNLZfcDQPnJNeDodVN1mj7PvJa74L6bITypdxaA==}
+  '@clack/core@0.5.0':
+    resolution: {integrity: sha512-p3y0FIOwaYRUPRcMO7+dlmLh8PSRcrjuTndsiA0WAFbWES0mLZlrjVoBRZ9DzkPFJZG6KGkJmoEAY0ZcVWTkow==}
+
+  '@clack/prompts@0.11.0':
+    resolution: {integrity: sha512-pMN5FcrEw9hUkZA4f+zLlzivQSeQf5dRGJjSUbvVYDLvpKCdQx5OaknvKzgbtXOizhP+SJJJjqEbOe55uKKfAw==}
+
+  '@samuelfaj/distill-darwin-arm64@1.5.2':
+    resolution: {integrity: sha512-fEsDh2kz3CrQoMqKWyn9iGWeWI4E1prW9DFKvfYNnafgvnn0hx4J5VaOJaufX+I34e8FloaBz9rwJtR794Kcuw==}
     cpu: [arm64]
     os: [darwin]
 
-  '@samuelfaj/distill-darwin-x64@1.4.9':
-    resolution: {integrity: sha512-CGeg7K28x+M2l+JqxBH5sKJVxacaLvzumjjcKxd0wKvW5t4BxN9G7CMRpRz8ambRTPw4Grft/K4fgEwNGAUTOw==}
+  '@samuelfaj/distill-darwin-x64@1.5.2':
+    resolution: {integrity: sha512-MxLzJGhB5RNi467vJ/S/JNtR9dwINC/aSuaUuRJS89JUIwQjA7Hb07Z1p1Z3R1szSBMgcxEP3M4yjvHOBpTogQ==}
     cpu: [x64]
     os: [darwin]
 
-  '@samuelfaj/distill-linux-arm64@1.4.9':
-    resolution: {integrity: sha512-5Mjy2NH8abR9r9xgpDdz7dGJwKEbzYZguvQsjqoadTLPVda30yPHNnIz3QXXUAH2XKJe1mSzQlnL3nXA3EWXgA==}
+  '@samuelfaj/distill-linux-arm64@1.5.2':
+    resolution: {integrity: sha512-50lN2ANV38HEvF9oer13gy/ju1qHehs99I1FQ/J3hVMBBWObvNBUV7OnF5kjzkBGzsweXVHCdc074uLJ8HlaQA==}
     cpu: [arm64]
     os: [linux]
 
-  '@samuelfaj/distill-linux-x64@1.4.9':
-    resolution: {integrity: sha512-5C36XbfGl6p5EwF/eJLBcIxVbdZyu+xDNNI1kQUlohq4wgkaVhWxVNVCdp72ed50O4OQt5mUX6ofVt8AZnV0nQ==}
+  '@samuelfaj/distill-linux-x64@1.5.2':
+    resolution: {integrity: sha512-7nC47ys6HXV85lqM97do1ByI3fwOIKhxAMtVXNtPJt6z2GqwxL/8PFH7wvVWu0DQzgbd7oeJtACehu8TC1ArBQ==}
     cpu: [x64]
     os: [linux]
 
   '@types/node@25.7.0':
     resolution: {integrity: sha512-z+pdZyxE+RTQE9AcboAZCb4otwcrvgHD+GlBpPgn0emDVt0ohrTMhAwlr2Wd9nZ+nihhYFxO2pThz3C5qSu2Eg==}
 
+  picocolors@1.1.1:
+    resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
+
+  sisteransi@1.0.5:
+    resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
+
   undici-types@7.21.0:
     resolution: {integrity: sha512-w9IMgQrz4O0YN1LtB7K5P63vhlIOvC7opSmouCJ+ZywlPAlO9gIkJ+otk6LvGpAs2wg4econaCz3TvQ9xPoyuQ==}
 
 snapshots:
 
-  '@samuelfaj/distill-darwin-arm64@1.4.9':
+  '@clack/core@0.5.0':
+    dependencies:
+      picocolors: 1.1.1
+      sisteransi: 1.0.5
+
+  '@clack/prompts@0.11.0':
+    dependencies:
+      '@clack/core': 0.5.0
+      picocolors: 1.1.1
+      sisteransi: 1.0.5
+
+  '@samuelfaj/distill-darwin-arm64@1.5.2':
     optional: true
 
-  '@samuelfaj/distill-darwin-x64@1.4.9':
+  '@samuelfaj/distill-darwin-x64@1.5.2':
     optional: true
 
-  '@samuelfaj/distill-linux-arm64@1.4.9':
+  '@samuelfaj/distill-linux-arm64@1.5.2':
     optional: true
 
-  '@samuelfaj/distill-linux-x64@1.4.9':
+  '@samuelfaj/distill-linux-x64@1.5.2':
     optional: true
 
   '@types/node@25.7.0':
     dependencies:
       undici-types: 7.21.0
+
+  picocolors@1.1.1: {}
+
+  sisteransi@1.0.5: {}
 
   undici-types@7.21.0: {}
