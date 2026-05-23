@@ -272,7 +272,7 @@ describe("cli entrypoint", () => {
     const configPath = path.join(dir, "config.json");
 
     try {
-      const result = spawnSync("bun", ["run", cli], {
+      const result = spawnSync("bun", ["run", cli, "onboard"], {
         cwd: root,
         encoding: "utf8",
         input: [

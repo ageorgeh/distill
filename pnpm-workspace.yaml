@@ -1,2 +1,4 @@
 packages:
   - "packages/*"
+overrides:
+  '@samuelfaj/distill': link:packages/cli

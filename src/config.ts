@@ -22,7 +22,7 @@ export const DEFAULT_AUTO_LEARN_SOURCE = "output";
 export const DEFAULT_AUTO_PROMOTE_SCOPES = true;
 export const DEFAULT_MAX_PROMPT_DSL_ENTRIES = 40;
 
-export type Provider = "local" | "external";
+export type Provider = "local" | "ollama" | "external";
 export type LocalBackend = "auto" | "mlx" | "llamacpp";
 
 export interface DistillSettings {
@@ -197,11 +197,11 @@ function coercePort(input: string | number | undefined, label: string): number {
 function coerceProvider(input: string | undefined): Provider {
   const value = (input ?? DEFAULT_PROVIDER).trim().toLowerCase();
 
-  if (value === "local" || value === "external") {
+  if (value === "local" || value === "ollama" || value === "external") {
     return value;
   }
 
-  throw new UsageError("provider must be local or external.");
+  throw new UsageError("provider must be local, ollama, or external.");
 }
 
 function coercePersistedProvider(input: string | undefined): Provider {
@@ -528,6 +528,7 @@ export function parseCommand(
   }
 
   let timeoutMs = defaults.timeoutMs;
+  let providerOverride: Provider | undefined;
   let modelOverride: string | undefined;
   let hostOverride: string | undefined;
   let apiKeyOverride: string | undefined;
@@ -562,6 +563,13 @@ export function parseCommand(
       continue;
     }
 
+    if (token === "--provider" || token.startsWith("--provider=")) {
+      const parsed = readFlagValue(argv, index, "--provider");
+      providerOverride = coerceProvider(parsed.value);
+      index = parsed.nextIndex;
+      continue;
+    }
+
     if (token === "--timeout-ms" || token.startsWith("--timeout-ms=")) {
       const parsed = readFlagValue(argv, index, "--timeout-ms");
       timeoutMs = coerceTimeout(parsed.value);
@@ -589,17 +597,22 @@ export function parseCommand(
   }
 
   const provider =
-    modelOverride || hostOverride || apiKeyOverride ? "external" : defaults.provider;
+    providerOverride ??
+    (modelOverride || hostOverride || apiKeyOverride
+      ? defaults.provider === "ollama"
+        ? "ollama"
+        : "external"
+      : defaults.provider);
   const model =
-    provider === "external"
+    provider === "external" || provider === "ollama"
       ? modelOverride ?? env.DISTILL_MODEL ?? persisted.model ?? DEFAULT_MODEL
       : defaults.model;
   const host =
-    provider === "external"
+    provider === "external" || provider === "ollama"
       ? normalizeHost(hostOverride ?? env.DISTILL_HOST ?? persisted.host ?? DEFAULT_HOST)
       : defaults.host;
   const apiKey =
-    provider === "external"
+    provider === "external" || provider === "ollama"
       ? apiKeyOverride ?? env.DISTILL_API_KEY ?? persisted.apiKey ?? ""
       : "";
 
@@ -642,18 +655,21 @@ export function formatUsage(): string {
     "  distill config host http://127.0.0.1:11434/v1",
     '  distill config model "qwen3.5:2b"',
     "  distill config provider external",
+    "  distill config provider ollama",
     "  distill config provider local",
     '  distill --host http://127.0.0.1:1234/v1 --model my-model "summarize"',
     "",
     "Options:",
-    `  --model <name>        External model name (default local model: ${DISTILL_MLX_MODEL})`,
-    `  --host <url>          External OpenAI-compatible base URL (default local: http://${DEFAULT_LOCAL_HOST}:${DEFAULT_LOCAL_PORT}/v1)`,
+    "  --provider <name>     Provider: local, ollama, or external",
+    `  --model <name>        API model name (default Ollama model: ${DEFAULT_MODEL})`,
+    `  --host <url>          OpenAI-compatible base URL (default Ollama: ${DEFAULT_HOST})`,
     "  --api-key <key>       API key (env: DISTILL_API_KEY)",
     `  --timeout-ms <ms>     Request timeout in milliseconds (default: ${DEFAULT_TIMEOUT_MS})`,
     "  --debug               Print fallback reasons to stderr (env: DISTILL_DEBUG=true)",
     "",
     "Local model defaults:",
-    `  DISTILL_PROVIDER=external        Use an external OpenAI-compatible API`,
+    `  DISTILL_PROVIDER=ollama          Use your existing Ollama OpenAI-compatible service`,
+    `  DISTILL_PROVIDER=external        Use any other OpenAI-compatible API`,
     `  DISTILL_LOCAL_BACKEND=mlx        Override local backend: auto, mlx, llamacpp`,
     `  DISTILL_LOCAL_CONCURRENCY=5      Max concurrent local model requests`,
     `  DISTILL_LOCAL_PORT=${DEFAULT_LOCAL_PORT}       Local model server port`,

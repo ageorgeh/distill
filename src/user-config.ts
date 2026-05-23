@@ -4,37 +4,19 @@ import path from "node:path";
 import type { ConfigKey, PersistedConfig } from "./config";
 
 export function resolveConfigBaseDir(env: NodeJS.ProcessEnv): string {
-  const appData = env.APPDATA?.trim();
+  const explicitDir = env.DISTILL_CONFIG_DIR?.trim();
 
-  if (appData) {
-    return path.join(appData, "distill");
+  if (explicitDir) {
+    return explicitDir;
   }
 
-  const localAppData = env.LOCALAPPDATA?.trim();
+  const packageRoot = env.DISTILL_PACKAGE_ROOT?.trim();
 
-  if (localAppData) {
-    return path.join(localAppData, "distill");
+  if (packageRoot) {
+    return packageRoot;
   }
 
-  const xdg = env.XDG_CONFIG_HOME?.trim();
-
-  if (xdg) {
-    return path.join(xdg, "distill");
-  }
-
-  const userProfile = env.USERPROFILE?.trim();
-
-  if (userProfile) {
-    return path.join(userProfile, "AppData", "Roaming", "distill");
-  }
-
-  const home = env.HOME?.trim();
-
-  if (!home) {
-    throw new Error("Could not resolve a home directory for distill config.");
-  }
-
-  return path.join(home, ".config", "distill");
+  return process.cwd();
 }
 
 export function resolveConfigPath(env: NodeJS.ProcessEnv): string {

@@ -83,11 +83,7 @@ describe("user config", () => {
     }
   });
 
-  it("resolves config path from explicit path, xdg, and Windows env vars", () => {
-    const appData = "C:\\Users\\me\\AppData\\Roaming";
-    const localAppData = "C:\\Users\\me\\AppData\\Local";
-    const userProfile = "C:\\Users\\me";
-
+  it("resolves config path from explicit path, explicit dir, package root, and cwd", () => {
     expect(
       resolveConfigPath({
         DISTILL_CONFIG_PATH: "/tmp/custom-distill.json"
@@ -96,35 +92,16 @@ describe("user config", () => {
 
     expect(
       resolveConfigPath({
-        XDG_CONFIG_HOME: "/tmp/xdg"
+        DISTILL_CONFIG_DIR: "/tmp/custom-distill"
       })
-    ).toBe(path.join("/tmp/xdg", "distill", "config.json"));
+    ).toBe(path.join("/tmp/custom-distill", "config.json"));
 
     expect(
       resolveConfigPath({
-        APPDATA: appData
+        DISTILL_PACKAGE_ROOT: "/tmp/package-root"
       })
-    ).toBe(path.join(appData, "distill", "config.json"));
+    ).toBe(path.join("/tmp/package-root", "config.json"));
 
-    expect(
-      resolveConfigPath({
-        APPDATA: appData,
-        LOCALAPPDATA: localAppData
-      })
-    ).toBe(path.join(appData, "distill", "config.json"));
-
-    expect(
-      resolveConfigPath({
-        LOCALAPPDATA: localAppData
-      })
-    ).toBe(path.join(localAppData, "distill", "config.json"));
-
-    expect(
-      resolveConfigPath({
-        USERPROFILE: userProfile
-      })
-    ).toBe(
-      path.join(userProfile, "AppData", "Roaming", "distill", "config.json")
-    );
+    expect(resolveConfigPath({})).toBe(path.join(process.cwd(), "config.json"));
   });
 });

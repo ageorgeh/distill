@@ -197,6 +197,34 @@ describe("summarizeBatch", () => {
     expect(events).toEqual([]);
   });
 
+  it("does not start the managed local server for Ollama-service requests", async () => {
+    const events: string[] = [];
+
+    await summarizeBatch(
+      {
+        ...baseConfig,
+        provider: "ollama",
+        model: "qwen3.5:4b",
+        host: "http://127.0.0.1:11434/v1"
+      },
+      "1 passed",
+      {
+        ensureLocalServer: async () => {
+          events.push("unexpected");
+        }
+      },
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "PASS" } }]
+          }),
+          { status: 200 }
+        )
+    );
+
+    expect(events).toEqual([]);
+  });
+
   it("limits concurrent local-provider HTTP requests to local-concurrency", async () => {
     let activeRequests = 0;
     let maxActiveRequests = 0;

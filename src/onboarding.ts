@@ -155,15 +155,21 @@ function parseProviderChoice(input: string): Provider {
     return "local";
   }
 
+  if (["ollama", "o"].includes(normalized)) {
+    return "ollama";
+  }
+
   if (["external", "api", "e"].includes(normalized)) {
     return "external";
   }
 
-  throw new Error("provider must be local or external.");
+  throw new Error("provider must be local, ollama, or external.");
 }
 
 function safeProvider(value: string | undefined): Provider {
-  return value === "local" || value === "external" ? value : DEFAULT_PROVIDER;
+  return value === "local" || value === "ollama" || value === "external"
+    ? value
+    : DEFAULT_PROVIDER;
 }
 
 function parseLocalBackend(input: string, fallback: LocalBackend): LocalBackend {
@@ -496,6 +502,11 @@ async function runTuiOnboarding(
             hint: "default; runs on this machine"
           },
           {
+            value: "ollama",
+            label: "Ollama service",
+            hint: "uses your existing Ollama model"
+          },
+          {
             value: "external",
             label: "External API",
             hint: "OpenAI-compatible endpoint"
@@ -704,7 +715,7 @@ export async function runOnboarding({
   try {
     output.write("distill onboarding\n");
     const provider = parseProviderChoice(
-      await ask(`provider local/external [${currentProvider}]: `)
+      await ask(`provider local/ollama/external [${currentProvider}]: `)
     );
     const config: PersistedConfig = {
       ...persisted,

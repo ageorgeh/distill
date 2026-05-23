@@ -212,6 +212,32 @@ describe("parseCommand", () => {
     });
   });
 
+  it("uses persisted Ollama settings without starting the managed local server path", () => {
+    const command = parseCommand(
+      ["summarize"],
+      {},
+      {
+        provider: "ollama",
+        model: "qwen3.5:4b",
+        host: "http://127.0.0.1:11434/v1",
+        apiKey: "",
+        timeoutMs: 50
+      }
+    );
+
+    expect(command).toMatchObject({
+      kind: "run",
+      config: {
+        question: "summarize",
+        provider: "ollama",
+        model: "qwen3.5:4b",
+        host: "http://127.0.0.1:11434/v1",
+        apiKey: "",
+        timeoutMs: 50
+      }
+    });
+  });
+
   it("treats stale persisted provider names as local defaults instead of blocking the CLI", () => {
     expect(
       resolveRuntimeDefaults(
@@ -312,6 +338,12 @@ describe("parseCommand", () => {
       value: "external"
     });
 
+    expect(parseCommand(["config", "provider", "ollama"], {}, {})).toEqual({
+      kind: "configSet",
+      key: "provider",
+      value: "ollama"
+    });
+
     expect(parseCommand(["config", "local-backend", "mlx"], {}, {})).toEqual({
       kind: "configSet",
       key: "local-backend",
@@ -402,6 +434,32 @@ describe("parseCommand", () => {
     expect(() => parseCommand(["config", "local-backend", "ollama"], {}, {})).toThrow(
       UsageError
     );
+  });
+
+  it("parses inline Ollama provider overrides", () => {
+    const command = parseCommand(
+      [
+        "--provider",
+        "ollama",
+        "--model",
+        "qwen3.5:4b",
+        "--host",
+        "http://127.0.0.1:11434/v1",
+        "summarize"
+      ],
+      {},
+      {}
+    );
+
+    expect(command).toMatchObject({
+      kind: "run",
+      config: {
+        provider: "ollama",
+        model: "qwen3.5:4b",
+        host: "http://127.0.0.1:11434/v1",
+        apiKey: ""
+      }
+    });
   });
 
   it("normalizes trailing slash on host", () => {

@@ -27,6 +27,8 @@ pnpm link --global
 cd ../..
 pnpm list -g @samuelfaj/distill
 distill --version
+
+
 ```
 
 Notes:
@@ -60,7 +62,7 @@ It should not return your prompt rewritten. It should adopt the language structu
 
 ## Our Model
 
-Distill uses it's own **Expert Language Model** 
+Distill uses it's own **Expert Language Model**
 
 https://huggingface.co/samuelfaj/distill-1.7B-MLX
 

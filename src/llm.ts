@@ -36,6 +36,23 @@ function buildChatCompletionsUrl(baseUrl: string): URL {
   const normalized = new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
   const pathname = normalized.pathname.replace(/\/+$/, "");
 
+  /** 
+  curl -X POST "http://localhost:11434/v1/chat/completions" \
+  -H "content-type: application/json" \
+  -d '{
+    "model": "qwen3.5:4b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say hello in one sentence."
+      }
+    ],
+    "temperature": 0,
+    "reasoning_effort": "none",
+    "max_tokens": 512
+  }'
+  */
+
   normalized.pathname =
     pathname === "" || pathname === "/"
       ? "/v1/chat/completions"
@@ -48,7 +65,7 @@ function buildChatCompletionsUrl(baseUrl: string): URL {
 
 async function withLocalRequestGate<T>(
   config: RuntimeConfig,
-  callback: () => Promise<T>
+  callback: () => Promise<T>,
 ): Promise<T> {
   const key = `${config.localHost}:${config.localPort}`;
   let gate = localRequestGates.get(key);
@@ -69,7 +86,7 @@ async function withLocalRequestGate<T>(
 
 function acquireLocalRequestSlot(
   gate: LocalRequestGate,
-  limit: number
+  limit: number,
 ): Promise<void> {
   if (gate.active < limit) {
     gate.active += 1;
@@ -186,7 +203,9 @@ async function summarize(
   config: RuntimeConfig,
   prompt: PromptMessages,
   fetchImpl?: typeof fetch,
-  ensureLocalServerImpl: (config: RuntimeConfig) => Promise<void> = ensureLocalServer
+  ensureLocalServerImpl: (
+    config: RuntimeConfig,
+  ) => Promise<void> = ensureLocalServer,
 ): Promise<string> {
   if (config.provider === "local") {
     await ensureLocalServerImpl(config);
@@ -224,7 +243,7 @@ export function summarizeBatch(
     config,
     buildBatchPrompt(config.question, input, options),
     resolvedFetchImpl,
-    options.ensureLocalServer
+    options.ensureLocalServer,
   );
 }
 
