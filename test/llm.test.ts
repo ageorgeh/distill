@@ -3,6 +3,8 @@ import { describe, expect, it } from "bun:test";
 import {
   chatCompletion,
   summarizeBatch,
+  summarizeDslPromotion,
+  summarizeThreadLearn,
   summarizeTranslate,
   summarizeWatch
 } from "../src/llm";
@@ -145,6 +147,31 @@ describe("chatCompletion", () => {
 });
 
 describe("summarizeBatch", () => {
+  it("routes every summary mode to Codex without HTTP or a local server", async () => {
+    const calls: string[] = [];
+    const dependencies = {
+      ensureLocalServer: async () => { throw new Error("local server called"); },
+      codexCompletion: async ({ prompt }: { prompt: { system: string; user: string } }) => {
+        calls.push(prompt.user);
+        return "CODEX";
+      }
+    };
+    const config = {
+      ...baseConfig,
+      provider: "codex" as const,
+      model: "gpt-5.3-codex-spark",
+      codexCommand: "codex"
+    };
+    const noFetch = async () => { throw new Error("fetch called"); };
+
+    expect(await summarizeBatch(config, "batch", dependencies, noFetch)).toBe("CODEX");
+    expect(await summarizeTranslate(config, "text", "en", noFetch, dependencies)).toBe("CODEX");
+    expect(await summarizeWatch(config, "old", "new", noFetch, dependencies)).toBe("CODEX");
+    expect(await summarizeDslPromotion(config, "entries", noFetch, dependencies)).toBe("CODEX");
+    expect(await summarizeThreadLearn(config, "transcript", [], "memory", noFetch, dependencies)).toBe("CODEX");
+    expect(calls).toHaveLength(5);
+  });
+
   it("starts the local server before sending local-provider requests", async () => {
     const events: string[] = [];
 

@@ -12,6 +12,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import cliPackage from "../packages/cli/package.json";
+import { readPersistedConfig } from "../src/user-config";
 import { createScriptCommand } from "./script-command";
 
 const root = path.resolve(import.meta.dir, "..");
@@ -37,6 +38,32 @@ describe("cli entrypoint", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe(cliPackage.version);
+  });
+
+  it("prints safe runtime and request diagnostics in debug mode", () => {
+    const result = spawnSync(
+      "bun",
+      ["run", cli, "--provider", "codex", "--model", "debug-model", "--debug", "summarize"],
+      {
+        cwd: root,
+        encoding: "utf8",
+        input: "raw command output\n",
+        env: {
+          ...process.env,
+          DISTILL_CODEX_COMMAND: "distill-test-missing-codex-command",
+          DISTILL_DATASET_ENABLED: "false"
+        }
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("raw command output\n");
+    expect(result.stderr).toContain("distill: debug: runtime");
+    expect(result.stderr).toContain("mode=stream provider=codex model=\"debug-model\"");
+    expect(result.stderr).toContain('command="distill-test-missing-codex-command"');
+    expect(result.stderr).toContain("request=batch status=start input_bytes=19");
+    expect(result.stderr).toContain("fallback=batch_error");
+    expect(result.stderr).not.toContain("apiKey");
   });
 
   it("fails on unsupported platforms", () => {
@@ -72,51 +99,18 @@ describe("cli entrypoint", () => {
     expect(`${result.stdout}${result.stderr}`).toContain("stdin is required.");
   });
 
-  it("persists config commands", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "distill-cli-config-"));
-    const configPath = path.join(dir, "config.json");
-
-    try {
-      const setModel = spawnSync(
-        "bun",
-        ["run", cli, "config", "model", "qwen3.5:2b"],
-        {
-          cwd: root,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            DISTILL_CONFIG_PATH: configPath
-          }
-        }
-      );
-
-      const setDatasetEnabled = spawnSync(
-        "bun",
-        ["run", cli, "config", "dataset-enabled", "false"],
-        {
-          cwd: root,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            DISTILL_CONFIG_PATH: configPath
-          }
-        }
-      );
-
-      expect(setModel.status).toBe(0);
-      expect(setDatasetEnabled.status).toBe(0);
-      expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
-        model: "qwen3.5:2b",
-        datasetEnabled: false
-      });
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+  it("directs removed config commands to distill.config.ts", () => {
+    const result = spawnSync("bun", ["run", cli, "config", "provider", "codex"], {
+      cwd: root,
+      encoding: "utf8"
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Edit distill.config.ts instead");
   });
 
   it("runs dsl memory commands", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "distill-cli-dsl-"));
-    const configPath = path.join(dir, "config.json");
+    const configPath = path.join(dir, "distill.config.ts");
     const env = {
       ...process.env,
       DISTILL_CONFIG_PATH: configPath
@@ -153,7 +147,7 @@ describe("cli entrypoint", () => {
   it("runs onboarding with local model and skill install defaults", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "distill-onboarding-"));
     const home = path.join(dir, "home");
-    const configPath = path.join(dir, "config.json");
+    const configPath = path.join(dir, "distill.config.ts");
     const oldBlock = [
       "keep before",
       "<!-- distill skill: begin -->",
@@ -193,7 +187,7 @@ describe("cli entrypoint", () => {
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("distill onboarding");
       expect(result.stdout).toContain("/distill skill installed for Codex and Claude");
-      expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
+      expect(await readPersistedConfig({ DISTILL_CONFIG_PATH: configPath })).toEqual({
         provider: "local",
         localBackend: "auto",
         localConcurrency: 5,
@@ -269,7 +263,7 @@ describe("cli entrypoint", () => {
   it("runs onboarding with external API config when explicitly selected", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "distill-onboarding-external-"));
     const home = path.join(dir, "home");
-    const configPath = path.join(dir, "config.json");
+    const configPath = path.join(dir, "distill.config.ts");
 
     try {
       const result = spawnSync("bun", ["run", cli, "onboard"], {
@@ -293,7 +287,7 @@ describe("cli entrypoint", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
+      expect(await readPersistedConfig({ DISTILL_CONFIG_PATH: configPath })).toEqual({
         provider: "external",
         host: "http://127.0.0.1:1234/v1",
         model: "external-model",

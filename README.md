@@ -119,6 +119,50 @@ git diff | distill "What changed? Return only files changed and one-line summary
 terraform plan 2>&1 | distill "Is this safe? Return SAFE, REVIEW, or UNSAFE, followed by risky changes."
 ```
 
+### Codex CLI provider (ChatGPT Pro)
+
+The Codex provider uses your existing Codex/ChatGPT authentication and does not
+require an API key or use the OpenAI-compatible HTTP API. Check authentication,
+then edit `distill.config.ts`:
+
+```bash
+codex login status
+```
+
+```ts
+export default {
+  provider: "codex",
+  codexCommand: "codex",
+  codexModel: "gpt-5.3-codex-spark",
+  datasetEnabled: false,
+} satisfies PersistedConfig;
+```
+
+Smoke test:
+
+```bash
+printf 'PASS auth.test.ts\nFAIL queue.test.ts\nexpected 5, got 3\n' \
+  | distill --debug \
+    'Did tests pass? Return only PASS or FAIL followed by failing test names.'
+```
+
+Distill starts one ephemeral `codex exec` request per distillation. Spark
+availability and rate limits are controlled by your Codex plan. The saved
+Ollama model remains intact, so rollback only requires changing the provider in
+`distill.config.ts` back to `"ollama"`:
+
+```bash
+distill --provider codex --model gpt-5.3-codex-spark --debug \
+  'Did tests pass? Return only PASS or FAIL followed by failing test names.' \
+  < /tmp/distill-ab.txt
+```
+
+An invocation launched from inside another already-sandboxed Codex shell
+command may fail if the outer sandbox blocks the nested Codex network request.
+Test from a normal terminal first. On failure, use Ollama/local or explicitly
+configure appropriate outer network permissions; do not bypass the sandbox.
+With `--debug`, distill reports why it fell back to raw command output.
+
 Debug raw fallback reasons:
 
 ```bash
@@ -129,6 +173,10 @@ DISTILL_DEBUG=true cmd 2>&1 | distill "Did tests pass? Return PASS or FAIL."
 Debug logs go to `stderr` with prefix `distill: debug:` and reason keys like:
 `fallback=batch_bad_distillation`, `fallback=batch_error`,
 `fallback=interactive_prompt`, `fallback=watch_bad_distillation`, `fallback=watch_error`.
+They also report the selected provider and model, request mode, timeout, safe
+transport details (Codex executable or HTTP endpoint), enabled features, input
+and output byte counts, request status, and elapsed time. API keys, prompt text,
+authentication data, and the captured command output are never logged.
 
 **Recommended LLM: qwen3.5-4b**
 

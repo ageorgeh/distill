@@ -3,6 +3,8 @@ import cliPackage from "../packages/cli/package.json";
 export const DISTILL_VERSION = cliPackage.version;
 
 export const DEFAULT_MODEL = "qwen3.5:4b";
+export const DEFAULT_CODEX_MODEL = "gpt-5.3-codex-spark";
+export const DEFAULT_CODEX_COMMAND = "codex";
 export const DEFAULT_HOST = "http://127.0.0.1:11434/v1";
 export const DEFAULT_TIMEOUT_MS = 90_000;
 export const DEFAULT_PROVIDER = "local";
@@ -22,7 +24,7 @@ export const DEFAULT_AUTO_LEARN_SOURCE = "output";
 export const DEFAULT_AUTO_PROMOTE_SCOPES = true;
 export const DEFAULT_MAX_PROMPT_DSL_ENTRIES = 40;
 
-export type Provider = "local" | "ollama" | "external";
+export type Provider = "local" | "ollama" | "external" | "codex";
 export type LocalBackend = "auto" | "mlx" | "llamacpp";
 
 export interface DistillSettings {
@@ -34,6 +36,7 @@ export interface DistillSettings {
   model: string;
   host: string;
   apiKey: string;
+  codexCommand?: string;
   timeoutMs: number;
   datasetEnabled: boolean;
   datasetPath?: string;
@@ -49,32 +52,16 @@ export interface RuntimeConfig extends DistillSettings {
   question: string;
 }
 
-export type PersistedConfig = Partial<DistillSettings>;
-
-export type ConfigKey =
-  | "provider"
-  | "local-backend"
-  | "local-concurrency"
-  | "local-host"
-  | "local-port"
-  | "model"
-  | "host"
-  | "api-key"
-  | "timeout-ms"
-  | "dataset-enabled"
-  | "dataset-path"
-  | "auto-learn"
-  | "auto-promote-scopes"
-  | "max-prompt-dsl-entries";
+export type PersistedConfig = Partial<DistillSettings> & {
+  codexModel?: string;
+  codexCommand?: string;
+};
 
 export type Command =
   | { kind: "onboard" }
   | { kind: "help" }
   | { kind: "version" }
   | { kind: "dsl"; args: string[] }
-  | { kind: "configShow" }
-  | { kind: "configGet"; key: ConfigKey }
-  | { kind: "configSet"; key: ConfigKey; value: string | number | boolean }
   | {
       kind: "translate";
       text: string;
@@ -197,11 +184,11 @@ function coercePort(input: string | number | undefined, label: string): number {
 function coerceProvider(input: string | undefined): Provider {
   const value = (input ?? DEFAULT_PROVIDER).trim().toLowerCase();
 
-  if (value === "local" || value === "ollama" || value === "external") {
+  if (value === "local" || value === "ollama" || value === "external" || value === "codex") {
     return value;
   }
 
-  throw new UsageError("provider must be local, ollama, or external.");
+  throw new UsageError("provider must be local, ollama, external, or codex.");
 }
 
 function coercePersistedProvider(input: string | undefined): Provider {
@@ -286,15 +273,18 @@ export function resolveRuntimeDefaults(
     env.DISTILL_LOCAL_PORT ?? persisted.localPort ?? DEFAULT_LOCAL_PORT,
     "local-port"
   );
-  const model =
-    provider === "local"
-      ? resolveLocalModel(localBackend)
+  const model = provider === "local"
+    ? resolveLocalModel(localBackend)
+    : provider === "codex"
+      ? env.DISTILL_CODEX_MODEL ?? persisted.codexModel ?? DEFAULT_CODEX_MODEL
       : env.DISTILL_MODEL ?? persisted.model ?? DEFAULT_MODEL;
   const host =
     provider === "local"
       ? resolveLocalHost(localHost, localPort)
       : normalizeHost(env.DISTILL_HOST ?? persisted.host ?? DEFAULT_HOST);
   const apiKey = provider === "local" ? "" : env.DISTILL_API_KEY ?? persisted.apiKey ?? "";
+  const codexCommand =
+    env.DISTILL_CODEX_COMMAND ?? persisted.codexCommand ?? DEFAULT_CODEX_COMMAND;
   const timeoutMs = coerceTimeout(
     env.DISTILL_TIMEOUT_MS ?? String(persisted.timeoutMs ?? DEFAULT_TIMEOUT_MS),
   );
@@ -327,6 +317,7 @@ export function resolveRuntimeDefaults(
     model,
     host,
     apiKey,
+    ...(provider === "codex" ? { codexCommand } : {}),
     timeoutMs,
     datasetEnabled,
     datasetPath,
@@ -336,131 +327,6 @@ export function resolveRuntimeDefaults(
     autoPromoteScopes,
     maxPromptDslEntries,
     debug,
-  };
-}
-
-function parseConfigCommand(argv: string[]): Command {
-  if (argv.length === 1) {
-    return { kind: "configShow" };
-  }
-
-  const key = argv[1] as ConfigKey;
-
-  if (
-    ![
-      "model",
-      "host",
-      "provider",
-      "local-backend",
-      "local-concurrency",
-      "local-host",
-      "local-port",
-      "api-key",
-      "timeout-ms",
-      "dataset-enabled",
-      "dataset-path",
-      "auto-learn",
-      "auto-promote-scopes",
-      "max-prompt-dsl-entries",
-    ].includes(key)
-  ) {
-    throw new UsageError(`Unknown config key: ${argv[1]}`);
-  }
-
-  if (argv.length === 2) {
-    return { kind: "configGet", key };
-  }
-
-  const rawValue = argv.slice(2).join(" ").trim();
-
-  if (!rawValue) {
-    throw new UsageError(`Missing value for config key ${key}.`);
-  }
-
-  if (key === "timeout-ms") {
-    return {
-      kind: "configSet",
-      key,
-      value: coerceTimeout(rawValue),
-    };
-  }
-
-  if (key === "provider") {
-    return {
-      kind: "configSet",
-      key,
-      value: coerceProvider(rawValue)
-    };
-  }
-
-  if (key === "local-backend") {
-    return {
-      kind: "configSet",
-      key,
-      value: coerceLocalBackend(rawValue)
-    };
-  }
-
-  if (key === "local-concurrency") {
-    return {
-      kind: "configSet",
-      key,
-      value: coercePositiveInteger(rawValue, key)
-    };
-  }
-
-  if (key === "local-host") {
-    return {
-      kind: "configSet",
-      key,
-      value: normalizeLocalHost(rawValue)
-    };
-  }
-
-  if (key === "local-port") {
-    return {
-      kind: "configSet",
-      key,
-      value: coercePort(rawValue, key)
-    };
-  }
-
-  if (key === "host") {
-    return {
-      kind: "configSet",
-      key,
-      value: normalizeHost(rawValue),
-    };
-  }
-
-  if (key === "dataset-enabled") {
-    return {
-      kind: "configSet",
-      key,
-      value: coerceBoolean(rawValue),
-    };
-  }
-
-  if (key === "auto-learn" || key === "auto-promote-scopes") {
-    return {
-      kind: "configSet",
-      key,
-      value: coerceBoolean(rawValue),
-    };
-  }
-
-  if (key === "max-prompt-dsl-entries") {
-    return {
-      kind: "configSet",
-      key,
-      value: coercePositiveInteger(rawValue, key),
-    };
-  }
-
-  return {
-    kind: "configSet",
-    key,
-    value: rawValue,
   };
 }
 
@@ -474,7 +340,7 @@ export function parseCommand(
   }
 
   if (argv[0] === "config") {
-    return parseConfigCommand(argv);
+    throw new UsageError("The config command was removed. Edit distill.config.ts instead.");
   }
 
   if (argv[0] === "dsl") {
@@ -514,6 +380,7 @@ export function parseCommand(
         model: defaults.model,
         host: defaults.host,
         apiKey: defaults.apiKey,
+        ...(defaults.provider === "codex" ? { codexCommand: defaults.codexCommand } : {}),
         timeoutMs: defaults.timeoutMs,
         datasetEnabled: defaults.datasetEnabled,
         datasetPath: defaults.datasetPath,
@@ -579,7 +446,6 @@ export function parseCommand(
 
     if (token === "--debug") {
       defaults.debug = true;
-      console.log("Running in debug mode");
       continue;
     }
 
@@ -596,15 +462,22 @@ export function parseCommand(
     throw new UsageError("A question is required.");
   }
 
+  if (providerOverride === "codex" && (hostOverride !== undefined || apiKeyOverride !== undefined)) {
+    throw new UsageError("--host and --api-key are incompatible with --provider codex.");
+  }
+
   const provider =
     providerOverride ??
     (modelOverride || hostOverride || apiKeyOverride
-      ? defaults.provider === "ollama"
-        ? "ollama"
+      ? modelOverride && !hostOverride && !apiKeyOverride &&
+        (defaults.provider === "ollama" || defaults.provider === "codex")
+        ? defaults.provider
         : "external"
       : defaults.provider);
   const model =
-    provider === "external" || provider === "ollama"
+    provider === "codex"
+      ? modelOverride ?? env.DISTILL_CODEX_MODEL ?? persisted.codexModel ?? DEFAULT_CODEX_MODEL
+      : provider === "external" || provider === "ollama"
       ? modelOverride ?? env.DISTILL_MODEL ?? persisted.model ?? DEFAULT_MODEL
       : defaults.model;
   const host =
@@ -628,6 +501,10 @@ export function parseCommand(
       model,
       host,
       apiKey,
+      ...(provider === "codex" ? {
+        codexCommand:
+          env.DISTILL_CODEX_COMMAND ?? persisted.codexCommand ?? DEFAULT_CODEX_COMMAND
+      } : {}),
       timeoutMs,
       datasetEnabled: defaults.datasetEnabled,
       datasetPath: defaults.datasetPath,
@@ -646,24 +523,23 @@ export function formatUsage(): string {
     "Usage:",
     '  cmd 2>&1 | distill "question"',
     "  distill onboard",
+    "  Edit distill.config.ts for persistent configuration",
     "  distill dsl show",
     "  distill dsl show --candidates",
     '  distill dsl learn --dry-run "Dict+: A1=auth fix"',
     "  distill dsl promote --dry-run",
     '  distill dsl add alias A1 "auth fix" --scope project',
     '  distill translate "Best: Fix auth bug. Pass: tests pass." [language]',
-    "  distill config host http://127.0.0.1:11434/v1",
-    '  distill config model "qwen3.5:2b"',
-    "  distill config provider external",
-    "  distill config provider ollama",
-    "  distill config provider local",
     '  distill --host http://127.0.0.1:1234/v1 --model my-model "summarize"',
     "",
     "Options:",
-    "  --provider <name>     Provider: local, ollama, or external",
+    "  --provider <name>     Provider: local, ollama, external, or codex",
     `  --model <name>        API model name (default Ollama model: ${DEFAULT_MODEL})`,
     `  --host <url>          OpenAI-compatible base URL (default Ollama: ${DEFAULT_HOST})`,
     "  --api-key <key>       API key (env: DISTILL_API_KEY)",
+    `  Codex defaults: ${DEFAULT_CODEX_COMMAND}, ${DEFAULT_CODEX_MODEL}`,
+    "  DISTILL_CODEX_COMMAND=<path>  Codex CLI executable",
+    "  DISTILL_CODEX_MODEL=<name>    Codex CLI model",
     `  --timeout-ms <ms>     Request timeout in milliseconds (default: ${DEFAULT_TIMEOUT_MS})`,
     "  --debug               Print fallback reasons to stderr (env: DISTILL_DEBUG=true)",
     "",

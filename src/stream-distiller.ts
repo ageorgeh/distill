@@ -160,6 +160,8 @@ export class DistillSession {
 
     try {
       this.setProgressPhase("summarizing");
+      const startedAt = Date.now();
+      this.debugLog(`request=batch status=start input_bytes=${rawInput.length}`);
       const summary = await this.summarizer.summarizeBatch(normalizedInput);
 
       if (looksLikeBadDistillation(rawInput, summary)) {
@@ -170,6 +172,9 @@ export class DistillSession {
       }
 
       const output = summary.trim();
+      this.debugLog(
+        `request=batch status=success input_bytes=${rawInput.length} output_bytes=${Buffer.byteLength(output)} elapsed_ms=${Date.now() - startedAt}`
+      );
       this.stopProgress(true);
       this.stdout.write(ensureTrailingNewline(output));
       await this.captureDatasetRecord(normalizedInput, output);
@@ -407,6 +412,10 @@ export class DistillSession {
     this.renderedPairs.add(key);
     this.queue = this.queue.then(async () => {
       try {
+        const startedAt = Date.now();
+        this.debugLog(
+          `request=watch status=start pair=${previous.id}:${current.id} input_bytes=${current.raw.length}`
+        );
         const summary = await this.summarizer.summarizeWatch(
           previous.normalized,
           current.normalized
@@ -420,7 +429,11 @@ export class DistillSession {
           return;
         }
 
-        this.renderWatchSummary(summary.trim());
+        const output = summary.trim();
+        this.debugLog(
+          `request=watch status=success pair=${previous.id}:${current.id} output_bytes=${Buffer.byteLength(output)} elapsed_ms=${Date.now() - startedAt}`
+        );
+        this.renderWatchSummary(output);
         this.trimWatchHistory();
       } catch (error) {
         this.debugLog(

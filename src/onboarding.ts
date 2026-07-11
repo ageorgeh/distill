@@ -4,6 +4,8 @@ import { createInterface } from "node:readline";
 import { stdin as defaultInput, stdout as defaultOutput } from "node:process";
 
 import {
+  DEFAULT_CODEX_COMMAND,
+  DEFAULT_CODEX_MODEL,
   DEFAULT_HOST,
   DEFAULT_LOCAL_BACKEND,
   DEFAULT_LOCAL_CONCURRENCY,
@@ -163,11 +165,15 @@ function parseProviderChoice(input: string): Provider {
     return "external";
   }
 
-  throw new Error("provider must be local, ollama, or external.");
+  if (["codex", "c", "spark"].includes(normalized)) {
+    return "codex";
+  }
+
+  throw new Error("provider must be local, ollama, external, or codex.");
 }
 
 function safeProvider(value: string | undefined): Provider {
-  return value === "local" || value === "ollama" || value === "external"
+  return value === "local" || value === "ollama" || value === "external" || value === "codex"
     ? value
     : DEFAULT_PROVIDER;
 }
@@ -480,6 +486,8 @@ async function runTuiOnboarding(
   const prompts = await import("@clack/prompts");
   const currentHost = persisted.host ?? DEFAULT_HOST;
   const currentModel = persisted.model ?? DEFAULT_MODEL;
+  const currentCodexModel = persisted.codexModel ?? DEFAULT_CODEX_MODEL;
+  const currentCodexCommand = persisted.codexCommand ?? DEFAULT_CODEX_COMMAND;
   const currentTimeout = persisted.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const currentProvider = safeProvider(persisted.provider);
   const currentLocalBackend = safeLocalBackend(persisted.localBackend);
@@ -510,6 +518,11 @@ async function runTuiOnboarding(
             value: "external",
             label: "External API",
             hint: "OpenAI-compatible endpoint"
+          },
+          {
+            value: "codex",
+            label: "Codex CLI (ChatGPT Pro)",
+            hint: "uses authenticated Codex CLI; defaults to 5.3 Codex Spark"
           }
         ]
       })
@@ -583,6 +596,19 @@ async function runTuiOnboarding(
       delete config.host;
       delete config.model;
       delete config.apiKey;
+    } else if (provider === "codex") {
+      config.codexCommand =
+        requirePromptValue(await prompts.text({
+          message: "Codex executable",
+          defaultValue: currentCodexCommand,
+          placeholder: DEFAULT_CODEX_COMMAND
+        })).trim() || currentCodexCommand;
+      config.codexModel =
+        requirePromptValue(await prompts.text({
+          message: "Codex model",
+          defaultValue: currentCodexModel,
+          placeholder: DEFAULT_CODEX_MODEL
+        })).trim() || currentCodexModel;
     } else {
       config.host =
         requirePromptValue(
@@ -704,6 +730,8 @@ export async function runOnboarding({
   };
   const currentHost = persisted.host ?? DEFAULT_HOST;
   const currentModel = persisted.model ?? DEFAULT_MODEL;
+  const currentCodexModel = persisted.codexModel ?? DEFAULT_CODEX_MODEL;
+  const currentCodexCommand = persisted.codexCommand ?? DEFAULT_CODEX_COMMAND;
   const currentTimeout = persisted.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const currentProvider = safeProvider(persisted.provider);
   const currentLocalBackend = safeLocalBackend(persisted.localBackend);
@@ -715,7 +743,7 @@ export async function runOnboarding({
   try {
     output.write("distill onboarding\n");
     const provider = parseProviderChoice(
-      await ask(`provider local/ollama/external [${currentProvider}]: `)
+      await ask(`provider local/ollama/external/codex [${currentProvider}]: `)
     );
     const config: PersistedConfig = {
       ...persisted,
@@ -743,6 +771,11 @@ export async function runOnboarding({
       delete config.host;
       delete config.model;
       delete config.apiKey;
+    } else if (provider === "codex") {
+      config.codexCommand =
+        (await ask(`codex-command [${currentCodexCommand}]: `)).trim() || currentCodexCommand;
+      config.codexModel =
+        (await ask(`codex-model [${currentCodexModel}]: `)).trim() || currentCodexModel;
     } else {
       const host =
         (await ask(`host [${currentHost}]: `)).trim() || currentHost;

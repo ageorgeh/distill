@@ -1,4 +1,5 @@
-import type { RuntimeConfig } from "./config";
+import { DEFAULT_CODEX_COMMAND, type RuntimeConfig } from "./config";
+import { codexCliCompletion } from "./codex-cli";
 import { ensureLocalServer } from "./local-server";
 import {
   buildBatchPrompt,
@@ -20,7 +21,12 @@ export interface ChatCompletionRequest {
   fetchImpl?: typeof fetch;
 }
 
-interface SummarizeOptions {
+export interface SummarizeDependencies {
+  codexCompletion?: typeof codexCliCompletion;
+  ensureLocalServer?: (config: RuntimeConfig) => Promise<void>;
+}
+
+interface SummarizeOptions extends SummarizeDependencies {
   dslMemory?: string;
   ensureLocalServer?: (config: RuntimeConfig) => Promise<void>;
 }
@@ -203,12 +209,19 @@ async function summarize(
   config: RuntimeConfig,
   prompt: PromptMessages,
   fetchImpl?: typeof fetch,
-  ensureLocalServerImpl: (
-    config: RuntimeConfig,
-  ) => Promise<void> = ensureLocalServer,
+  dependencies: SummarizeDependencies = {},
 ): Promise<string> {
+  if (config.provider === "codex") {
+    return (dependencies.codexCompletion ?? codexCliCompletion)({
+      model: config.model,
+      executable: config.codexCommand ?? DEFAULT_CODEX_COMMAND,
+      prompt,
+      timeoutMs: config.timeoutMs,
+    });
+  }
+
   if (config.provider === "local") {
-    await ensureLocalServerImpl(config);
+    await (dependencies.ensureLocalServer ?? ensureLocalServer)(config);
   }
 
   const request = () =>
@@ -243,7 +256,7 @@ export function summarizeBatch(
     config,
     buildBatchPrompt(config.question, input, options),
     resolvedFetchImpl,
-    options.ensureLocalServer,
+    options,
   );
 }
 
@@ -252,8 +265,9 @@ export function summarizeTranslate(
   text: string,
   language: string,
   fetchImpl?: typeof fetch,
+  dependencies?: SummarizeDependencies,
 ): Promise<string> {
-  return summarize(config, buildTranslatePrompt(text, language), fetchImpl);
+  return summarize(config, buildTranslatePrompt(text, language), fetchImpl, dependencies);
 }
 
 export function summarizeWatch(
@@ -261,11 +275,13 @@ export function summarizeWatch(
   previousCycle: string,
   currentCycle: string,
   fetchImpl?: typeof fetch,
+  dependencies?: SummarizeDependencies,
 ): Promise<string> {
   return summarize(
     config,
     buildWatchPrompt(config.question, previousCycle, currentCycle),
     fetchImpl,
+    dependencies,
   );
 }
 
@@ -273,8 +289,9 @@ export function summarizeDslPromotion(
   config: RuntimeConfig,
   entries: string,
   fetchImpl?: typeof fetch,
+  dependencies?: SummarizeDependencies,
 ): Promise<string> {
-  return summarize(config, buildDslPromotionPrompt(entries), fetchImpl);
+  return summarize(config, buildDslPromotionPrompt(entries), fetchImpl, dependencies);
 }
 
 export function summarizeThreadLearn(
@@ -283,10 +300,12 @@ export function summarizeThreadLearn(
   candidates: Parameters<typeof buildThreadLearnPrompt>[1],
   dslMemory: string,
   fetchImpl?: typeof fetch,
+  dependencies?: SummarizeDependencies,
 ): Promise<string> {
   return summarize(
     config,
     buildThreadLearnPrompt(transcript, candidates, dslMemory),
     fetchImpl,
+    dependencies,
   );
 }

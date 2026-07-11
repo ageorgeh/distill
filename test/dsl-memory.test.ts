@@ -23,7 +23,7 @@ async function withEnv<T>(fn: (env: NodeJS.ProcessEnv, cwd: string) => Promise<T
   const cwd = path.join(dir, "project");
   const env = {
     ...process.env,
-    DISTILL_CONFIG_PATH: path.join(dir, "config.json")
+    DISTILL_CONFIG_PATH: path.join(dir, "distill.config.ts")
   };
 
   try {

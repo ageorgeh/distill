@@ -6,7 +6,7 @@ import {
   setDefaultTimeout
 } from "bun:test";
 import { readdirSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -294,7 +294,7 @@ describe("distill end-to-end", () => {
   it("auto-learns Dict+ output and injects active DSL memory into later prompts", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "distill-e2e-dsl-"));
     const env = {
-      DISTILL_CONFIG_PATH: path.join(dir, "config.json")
+      DISTILL_CONFIG_PATH: path.join(dir, "distill.config.ts")
     };
     const fake = await createFakeChatProvider((_body, index) =>
       new Response(
@@ -347,7 +347,7 @@ describe("distill end-to-end", () => {
   it("learns inline variable dict from thread transcript and injects it into later prompts", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "distill-e2e-var-dsl-"));
     const env = {
-      DISTILL_CONFIG_PATH: path.join(dir, "config.json")
+      DISTILL_CONFIG_PATH: path.join(dir, "distill.config.ts")
     };
     const fake = await createFakeChatProvider((body, index) => {
       expect(index).toBe(0);
@@ -411,7 +411,7 @@ describe("distill end-to-end", () => {
   it("promotes explicit inline variables from a thread transcript without reviewer calls", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "distill-e2e-thread-dsl-"));
     const env = {
-      DISTILL_CONFIG_PATH: path.join(dir, "config.json")
+      DISTILL_CONFIG_PATH: path.join(dir, "distill.config.ts")
     };
 
     try {
@@ -720,7 +720,7 @@ describe("distill end-to-end", () => {
     }
   }, process.platform === "win32" ? 300_000 : undefined);
 
-  it("persists model config through the launcher", async () => {
+  it("loads model configuration from the TypeScript config file", async () => {
     const fake = await createFakeChatProvider((_body, _index) =>
       new Response(
         JSON.stringify({
@@ -730,14 +730,13 @@ describe("distill end-to-end", () => {
       )
     );
     const dir = await mkdtemp(path.join(tmpdir(), "distill-e2e-config-"));
-    const configPath = path.join(dir, "config.json");
+    const configPath = path.join(dir, "distill.config.ts");
 
     try {
-      const setModel = await runLauncher(["config", "model", "my-model"], {
-        env: {
-          DISTILL_CONFIG_PATH: configPath
-        }
-      });
+      await writeFile(
+        configPath,
+        'export default { provider: "external", model: "my-model" };\n',
+      );
 
       const result = await runLauncher(["summarize"], {
         env: {
@@ -747,7 +746,6 @@ describe("distill end-to-end", () => {
         inputSteps: [{ data: "all good\n" }]
       });
 
-      expect(setModel.stdout).toBe("model=my-model\n");
       expect(result.stdout).toBe("Configured summary.\n");
       expect(fake.requests).toHaveLength(1);
       expect(fake.requests[0]).toMatchObject({

@@ -5,6 +5,8 @@ import {
   DEFAULT_AUTO_LEARN_SCOPE,
   DEFAULT_AUTO_LEARN_SOURCE,
   DEFAULT_AUTO_PROMOTE_SCOPES,
+  DEFAULT_CODEX_COMMAND,
+  DEFAULT_CODEX_MODEL,
   DEFAULT_HOST,
   DEFAULT_LOCAL_BACKEND,
   DEFAULT_LOCAL_CONCURRENCY,
@@ -18,6 +20,52 @@ import {
   parseCommand,
   resolveRuntimeDefaults
 } from "../src/config";
+
+describe("Codex provider configuration", () => {
+  it("resolves independent Codex defaults and persisted/env values", () => {
+    expect(resolveRuntimeDefaults({ DISTILL_PROVIDER: "codex" }, {})).toMatchObject({
+      provider: "codex",
+      model: DEFAULT_CODEX_MODEL,
+      codexCommand: DEFAULT_CODEX_COMMAND
+    });
+    expect(resolveRuntimeDefaults(
+      {
+        DISTILL_PROVIDER: "codex",
+        DISTILL_CODEX_MODEL: "env-spark",
+        DISTILL_CODEX_COMMAND: "/opt/codex"
+      },
+      { model: "qwen-saved", codexModel: "saved-spark", codexCommand: "saved-codex" }
+    )).toMatchObject({ model: "env-spark", codexCommand: "/opt/codex" });
+  });
+
+  it("keeps Codex selected for model overrides without changing the saved API model", () => {
+    const persisted = { provider: "codex" as const, model: "qwen-saved", codexModel: "spark-saved" };
+    const command = parseCommand(["--model", "other-model", "summarize"], {}, persisted);
+    expect(command.kind).toBe("run");
+    if (command.kind === "run") {
+      expect(command.config.provider).toBe("codex");
+      expect(command.config.model).toBe("other-model");
+    }
+    expect(persisted.model).toBe("qwen-saved");
+  });
+
+  it("accepts explicit Codex and rejects its incompatible HTTP options", () => {
+    const command = parseCommand(
+      ["--provider", "codex", "--model", "custom", "summarize"], {}, {}
+    );
+    expect(command.kind === "run" && command.config).toMatchObject({
+      provider: "codex",
+      model: "custom",
+      codexCommand: "codex"
+    });
+    expect(() => parseCommand(
+      ["--provider", "codex", "--host", "http://example.test", "summarize"], {}, {}
+    )).toThrow("incompatible");
+    expect(() => parseCommand(
+      ["--provider", "codex", "--api-key", "secret", "summarize"], {}, {}
+    )).toThrow("incompatible");
+  });
+});
 
 const defaultAutoLearnConfig = {
   autoLearn: DEFAULT_AUTO_LEARN,
@@ -331,109 +379,9 @@ describe("parseCommand", () => {
     });
   });
 
-  it("parses config set commands", () => {
-    expect(parseCommand(["config", "provider", "external"], {}, {})).toEqual({
-      kind: "configSet",
-      key: "provider",
-      value: "external"
-    });
-
-    expect(parseCommand(["config", "provider", "ollama"], {}, {})).toEqual({
-      kind: "configSet",
-      key: "provider",
-      value: "ollama"
-    });
-
-    expect(parseCommand(["config", "local-backend", "mlx"], {}, {})).toEqual({
-      kind: "configSet",
-      key: "local-backend",
-      value: "mlx"
-    });
-
-    expect(parseCommand(["config", "local-concurrency", "9"], {}, {})).toEqual({
-      kind: "configSet",
-      key: "local-concurrency",
-      value: 9
-    });
-
-    expect(parseCommand(["config", "local-host", "127.0.0.9"], {}, {})).toEqual({
-      kind: "configSet",
-      key: "local-host",
-      value: "127.0.0.9"
-    });
-
-    expect(parseCommand(["config", "local-port", "8019"], {}, {})).toEqual({
-      kind: "configSet",
-      key: "local-port",
-      value: 8019
-    });
-
-    expect(parseCommand(["config", "model", "my-model"], {}, {})).toEqual({
-      kind: "configSet",
-      key: "model",
-      value: "my-model"
-    });
-
-    expect(
-      parseCommand(["config", "host", "http://127.0.0.1:8010/v1"], {}, {})
-    ).toEqual({
-      kind: "configSet",
-      key: "host",
-      value: "http://127.0.0.1:8010/v1"
-    });
-
-    expect(parseCommand(["config", "timeout-ms", "30000"], {}, {})).toEqual({
-      kind: "configSet",
-      key: "timeout-ms",
-      value: 30000
-    });
-
-    expect(parseCommand(["config", "dataset-enabled", "false"], {}, {})).toEqual({
-      kind: "configSet",
-      key: "dataset-enabled",
-      value: false
-    });
-
-    expect(
-      parseCommand(["config", "dataset-path", "/tmp/distill.jsonl"], {}, {})
-    ).toEqual({
-      kind: "configSet",
-      key: "dataset-path",
-      value: "/tmp/distill.jsonl"
-    });
-
-    expect(parseCommand(["config", "auto-learn", "false"], {}, {})).toEqual({
-      kind: "configSet",
-      key: "auto-learn",
-      value: false
-    });
-
-    expect(parseCommand(["config", "auto-promote-scopes", "false"], {}, {})).toEqual({
-      kind: "configSet",
-      key: "auto-promote-scopes",
-      value: false
-    });
-
-    expect(parseCommand(["config", "max-prompt-dsl-entries", "12"], {}, {})).toEqual({
-      kind: "configSet",
-      key: "max-prompt-dsl-entries",
-      value: 12
-    });
-  });
-
-  it("rejects unknown config keys", () => {
-    expect(() => parseCommand(["config", "unknown-provider", "openai"], {}, {})).toThrow(
-      UsageError
-    );
-  });
-
-  it("rejects invalid provider and local backend values", () => {
-    expect(() => parseCommand(["config", "provider", "openai"], {}, {})).toThrow(
-      UsageError
-    );
-    expect(() => parseCommand(["config", "local-backend", "ollama"], {}, {})).toThrow(
-      UsageError
-    );
+  it("directs legacy config commands to the TypeScript file", () => {
+    expect(() => parseCommand(["config", "provider", "external"], {}, {}))
+      .toThrow("Edit distill.config.ts instead");
   });
 
   it("parses inline Ollama provider overrides", () => {

@@ -24,10 +24,7 @@ import { runOnboarding } from "./onboarding";
 import { DistillSession, type ProgressPhase } from "./stream-distiller";
 import { resolveDatasetPath } from "./dataset";
 import {
-  getPersistedConfigValue,
   readPersistedConfig,
-  resolveConfigPath,
-  setPersistedConfigValue,
 } from "./user-config";
 
 async function readAllStdin(): Promise<string> {
@@ -47,6 +44,23 @@ async function readAllStdin(): Promise<string> {
   });
 
   return Buffer.concat(chunks).toString("utf8");
+}
+
+function debugRuntime(config: import("./config").RuntimeConfig, mode: string): void {
+  if (!config.debug) return;
+
+  const transport = config.provider === "codex"
+    ? `command=${JSON.stringify(config.codexCommand ?? "codex")}`
+    : config.provider === "local"
+      ? `backend=${config.localBackend} endpoint=${JSON.stringify(config.host)} concurrency=${config.localConcurrency}`
+      : `endpoint=${JSON.stringify(config.host)}`;
+
+  process.stderr.write(
+    `distill: debug: runtime version=${DISTILL_VERSION} mode=${mode} provider=${config.provider} model=${JSON.stringify(config.model)} timeout_ms=${config.timeoutMs} ${transport}\n`,
+  );
+  process.stderr.write(
+    `distill: debug: features dataset=${config.datasetEnabled ? "enabled" : "disabled"} auto_learn=${config.autoLearn === false ? "disabled" : "enabled"} max_dsl_entries=${config.maxPromptDslEntries ?? 40}\n`,
+  );
 }
 
 async function run(): Promise<number> {
@@ -126,47 +140,19 @@ async function run(): Promise<number> {
     return 0;
   }
 
-  if (command.kind === "configShow") {
-    process.stdout.write(
-      [
-        `path=${resolveConfigPath(process.env)}`,
-        `provider=${persisted.provider ?? ""}`,
-        `local-backend=${persisted.localBackend ?? ""}`,
-        `local-concurrency=${persisted.localConcurrency ?? ""}`,
-        `local-host=${persisted.localHost ?? ""}`,
-        `local-port=${persisted.localPort ?? ""}`,
-        `model=${persisted.model ?? ""}`,
-        `host=${persisted.host ?? ""}`,
-        `api-key=${persisted.apiKey ? "***" : ""}`,
-        `timeout-ms=${persisted.timeoutMs ?? ""}`,
-        `dataset-enabled=${persisted.datasetEnabled ?? ""}`,
-        `dataset-path=${persisted.datasetPath ?? ""}`,
-        `auto-learn=${persisted.autoLearn ?? ""}`,
-        `auto-promote-scopes=${persisted.autoPromoteScopes ?? ""}`,
-        `max-prompt-dsl-entries=${persisted.maxPromptDslEntries ?? ""}`,
-      ].join("\n") + "\n",
-    );
-    return 0;
-  }
-
-  if (command.kind === "configGet") {
-    const value = getPersistedConfigValue(persisted, command.key);
-    process.stdout.write(`${value ?? ""}\n`);
-    return 0;
-  }
-
-  if (command.kind === "configSet") {
-    await setPersistedConfigValue(process.env, command.key, command.value);
-    process.stdout.write(`${command.key}=${String(command.value)}\n`);
-    return 0;
-  }
-
   if (command.kind === "translate") {
+    debugRuntime(command.config, "translate");
+    const startedAt = Date.now();
     const output = await summarizeTranslate(
       command.config,
       command.text,
       command.language,
     );
+    if (command.config.debug) {
+      process.stderr.write(
+        `distill: debug: request=translate status=success output_bytes=${Buffer.byteLength(output)} elapsed_ms=${Date.now() - startedAt}\n`,
+      );
+    }
     process.stdout.write(`${output}\n`);
     return 0;
   }
@@ -174,6 +160,8 @@ async function run(): Promise<number> {
   if (process.stdin.isTTY) {
     throw new UsageError("stdin is required.");
   }
+
+  debugRuntime(command.config, "stream");
 
   const progressProtocol = process.env.DISTILL_PROGRESS_PROTOCOL === "stderr";
   const mergedDslMemory = await readMergedDslMemory(
