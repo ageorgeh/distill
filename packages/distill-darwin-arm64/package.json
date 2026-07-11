@@ -2,6 +2,9 @@
   "name": "@samuelfaj/distill-darwin-arm64",
   "version": "1.5.2",
   "license": "MIT",
+  "bin": {
+    "distill": "bin/distill"
+  },
   "files": [
     "bin/distill"
   ],

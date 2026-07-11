@@ -374,6 +374,7 @@ describe("DistillSession", () => {
       isTTY: false,
       idleMs: 15,
       interactiveGapMs: 5,
+      watchMode: true,
       summarizer: {
         summarizeBatch: async () => "unused",
         summarizeWatch: async () => {
@@ -393,6 +394,42 @@ describe("DistillSession", () => {
     expect(watchCalls).toBe(1);
   });
 
+  it("does not summarize recurring output before stdin ends by default", async () => {
+    const writer = createWriter();
+    let batchCalls = 0;
+    let watchCalls = 0;
+    const session = new DistillSession({
+      stdout: writer,
+      isTTY: false,
+      idleMs: 15,
+      interactiveGapMs: 5,
+      summarizer: {
+        summarizeBatch: async () => {
+          batchCalls += 1;
+          return "final batch summary";
+        },
+        summarizeWatch: async () => {
+          watchCalls += 1;
+          return "early watch summary";
+        }
+      }
+    });
+
+    session.push(Buffer.from("watch run\nfailed: 0\n"));
+    await sleep(25);
+    session.push(Buffer.from("watch run\nfailed: 1\n"));
+    await sleep(40);
+
+    expect(writer.read()).toBe("");
+    expect(watchCalls).toBe(0);
+
+    await session.end();
+
+    expect(writer.read()).toBe("final batch summary\n");
+    expect(batchCalls).toBe(1);
+    expect(watchCalls).toBe(0);
+  });
+
   it("clears the terminal when rendering watch output on a tty", async () => {
     const writer = createWriter();
     const session = new DistillSession({
@@ -400,6 +437,7 @@ describe("DistillSession", () => {
       isTTY: true,
       idleMs: 15,
       interactiveGapMs: 5,
+      watchMode: true,
       summarizer: {
         summarizeBatch: async () => "unused",
         summarizeWatch: async () => "watch summary"

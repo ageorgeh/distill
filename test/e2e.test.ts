@@ -45,6 +45,7 @@ const currentPlatformPackage = (() => {
 function createProviderEnv(host: string, env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
     ...env,
+    DISTILL_PROVIDER: "external",
     DISTILL_HOST: host
   };
 }
@@ -544,12 +545,17 @@ describe("distill end-to-end", () => {
     ]);
 
     try {
-      runOrThrow(
+      const result = await runProcess(
         scriptCommand.command,
         scriptCommand.args,
-        root,
-        createProviderEnv(fake.host)
+        {
+          cwd: root,
+          env: createProviderEnv(fake.host)
+        }
       );
+
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe("");
 
       const output = normalizePtyOutput(await readFile(capturePath, "utf8"));
       const lines = output.split("\n");
@@ -580,12 +586,12 @@ describe("distill end-to-end", () => {
     expect(result.stdout).toBe("fallback payload\n");
   });
 
-  it("detects watch-like recurring output and emits watch summaries", async () => {
+  it("waits for stdin to close before summarizing watch-like recurring output", async () => {
     const fake = await createFakeChatProvider((body) => {
       const messages = (body.messages ?? []) as Array<{ content?: string }>;
       const prompt = messages.map((m) => String(m?.content ?? "")).join("\n");
 
-      if (!prompt.includes("Previous cycle:") || !prompt.includes("Current cycle:")) {
+      if (prompt.includes("Previous cycle:") || prompt.includes("Current cycle:")) {
         return new Response(
           JSON.stringify({
             choices: [{ message: { content: "unexpected prompt" } }]
@@ -597,7 +603,7 @@ describe("distill end-to-end", () => {
       return new Response(
         JSON.stringify({
           choices: [
-            { message: { content: "Failure count changed from 0 to 1." } }
+            { message: { content: "Final failure count is 1." } }
           ]
         }),
         { status: 200 }
@@ -616,13 +622,15 @@ describe("distill end-to-end", () => {
 
       expect(result.code).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout).toBe("Failure count changed from 0 to 1.\n");
+      expect(result.stdout).toBe("Final failure count is 1.\n");
       expect(fake.requests).toHaveLength(1);
       const messages = (fake.requests[0].messages ?? []) as Array<{
         content?: string;
       }>;
       const allContent = messages.map((m) => String(m?.content ?? "")).join("\n");
-      expect(allContent).toContain("Previous cycle:");
+      expect(allContent).not.toContain("Previous cycle:");
+      expect(allContent).toContain("failures: 0");
+      expect(allContent).toContain("failures: 1");
     } finally {
       fake.stop();
     }

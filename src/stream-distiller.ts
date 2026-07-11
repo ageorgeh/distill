@@ -53,6 +53,7 @@ export interface DistillSessionOptions {
   idleMs?: number;
   interactiveGapMs?: number;
   progressFrameMs?: number;
+  watchMode?: boolean;
   debug?: boolean;
 }
 
@@ -70,6 +71,7 @@ export class DistillSession {
   private readonly idleMs: number;
   private readonly interactiveGapMs: number;
   private readonly progressFrameMs: number;
+  private readonly watchMode: boolean;
   private readonly debug: boolean;
   private readonly rawBuffers: Buffer[] = [];
   private readonly completedBursts: Burst[] = [];
@@ -103,6 +105,7 @@ export class DistillSession {
     this.idleMs = options.idleMs ?? DEFAULT_IDLE_MS;
     this.interactiveGapMs = options.interactiveGapMs ?? DEFAULT_INTERACTIVE_GAP_MS;
     this.progressFrameMs = options.progressFrameMs ?? DEFAULT_PROGRESS_FRAME_MS;
+    this.watchMode = options.watchMode ?? false;
     this.debug = options.debug ?? false;
     this.onProgressPhase?.(this.progressPhase);
     this.startProgress();
@@ -214,6 +217,10 @@ export class DistillSession {
   }
 
   private restartIdleTimer(): void {
+    if (!this.watchMode) {
+      return;
+    }
+
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
     }
