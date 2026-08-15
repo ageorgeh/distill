@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -62,6 +62,10 @@ try {
   runOrThrow(packageManagerCommand, ["add", ...tarballs], installDir);
 
   const shimPath = resolveInstalledShimPath(installDir);
+  await writeFile(
+    path.join(installDir, "distill.config.ts"),
+    'export default { provider: "external", host: "http://127.0.0.1:9" };\n',
+  );
   const versionOutput = runOrThrow(shimPath, ["--version"], installDir);
 
   if (versionOutput !== cliPackage.version) {
@@ -70,11 +74,7 @@ try {
 
   const fallbackProcess = spawnSync(shimPath, ["summarize briefly"], {
     cwd: installDir,
-    env: {
-      ...process.env,
-      DISTILL_PROVIDER: "external",
-      DISTILL_HOST: "http://127.0.0.1:9"
-    },
+    env: process.env,
     encoding: "utf8",
     input: "fallback smoke\n"
   });

@@ -3,8 +3,6 @@ import { codexCliCompletion } from "./codex-cli";
 import { ensureLocalServer } from "./local-server";
 import {
   buildBatchPrompt,
-  buildDslPromotionPrompt,
-  buildThreadLearnPrompt,
   buildTranslatePrompt,
   buildWatchPrompt,
   type PromptMessages,
@@ -26,10 +24,7 @@ export interface SummarizeDependencies {
   ensureLocalServer?: (config: RuntimeConfig) => Promise<void>;
 }
 
-interface SummarizeOptions extends SummarizeDependencies {
-  dslMemory?: string;
-  ensureLocalServer?: (config: RuntimeConfig) => Promise<void>;
-}
+type SummarizeOptions = SummarizeDependencies;
 
 interface LocalRequestGate {
   active: number;
@@ -254,7 +249,7 @@ export function summarizeBatch(
 
   return summarize(
     config,
-    buildBatchPrompt(config.question, input, options),
+    buildBatchPrompt(config.question, input),
     resolvedFetchImpl,
     options,
   );
@@ -280,31 +275,6 @@ export function summarizeWatch(
   return summarize(
     config,
     buildWatchPrompt(config.question, previousCycle, currentCycle),
-    fetchImpl,
-    dependencies,
-  );
-}
-
-export function summarizeDslPromotion(
-  config: RuntimeConfig,
-  entries: string,
-  fetchImpl?: typeof fetch,
-  dependencies?: SummarizeDependencies,
-): Promise<string> {
-  return summarize(config, buildDslPromotionPrompt(entries), fetchImpl, dependencies);
-}
-
-export function summarizeThreadLearn(
-  config: RuntimeConfig,
-  transcript: string,
-  candidates: Parameters<typeof buildThreadLearnPrompt>[1],
-  dslMemory: string,
-  fetchImpl?: typeof fetch,
-  dependencies?: SummarizeDependencies,
-): Promise<string> {
-  return summarize(
-    config,
-    buildThreadLearnPrompt(transcript, candidates, dslMemory),
     fetchImpl,
     dependencies,
   );

@@ -1,7 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
 import { DistillSession } from "../src/stream-distiller";
 
@@ -17,19 +14,7 @@ function createWriter() {
     },
     read() {
       return value;
-    }
-  };
-}
-
-function createDelayedSummarizer(delayMs: number, response: string) {
-  return {
-    async summarizeBatch() {
-      await sleep(delayMs);
-      return response;
     },
-    async summarizeWatch() {
-      return "unused";
-    }
   };
 }
 
@@ -39,199 +24,33 @@ describe("DistillSession", () => {
     const session = new DistillSession({
       stdout: writer,
       isTTY: false,
-      idleMs: 10,
-      interactiveGapMs: 5,
       summarizer: {
         summarizeBatch: async () => "All tests passed",
-        summarizeWatch: async () => "unused"
-      }
+        summarizeWatch: async () => "unused",
+      },
     });
 
     session.push(Buffer.from("test output\n"));
     await session.end();
 
-    expect(writer.read()).toContain("All tests passed\n");
+    expect(writer.read()).toBe("All tests passed\n");
   });
 
-  it("writes a dataset record for successful batch output", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "distill-session-dataset-"));
-    const datasetPath = path.join(dir, "distill.jsonl");
-    const writer = createWriter();
-
-    try {
-      const session = new DistillSession({
-        stdout: writer,
-        isTTY: false,
-        idleMs: 10,
-        interactiveGapMs: 5,
-        runtimeConfig: {
-          question: "Did the tests pass? Return PASS or FAIL.",
-          model: "qwen3.5:2b",
-          host: "http://127.0.0.1:11434/v1",
-          apiKey: "",
-          timeoutMs: 90_000,
-          datasetEnabled: true
-        },
-        dataset: {
-          enabled: true,
-          path: datasetPath
-        },
-        summarizer: {
-          summarizeBatch: async () => "PASS",
-          summarizeWatch: async () => "unused"
-        }
-      });
-
-      session.push(Buffer.from("1 passed\n"));
-      await session.end();
-
-      const [line] = (await readFile(datasetPath, "utf8")).trim().split("\n");
-      const record = JSON.parse(line);
-
-      expect(writer.read()).toBe("PASS\n");
-      expect(record.prompt).toContain("TASK:\ntest_result");
-      expect(record.prompt).toContain(
-        "QUESTION:\nDid the tests pass? Return PASS or FAIL."
-      );
-      expect(record.prompt).toContain("INPUT:\n1 passed");
-      expect(record.completion).toBe("PASS");
-      expect(record.metadata.source).toBe("distill");
-      expect(record.metadata.mode).toBe("batch");
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("writes insufficient-information batch output as a negative example", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "distill-session-dataset-"));
-    const datasetPath = path.join(dir, "distill.jsonl");
-    const writer = createWriter();
-
-    try {
-      const session = new DistillSession({
-        stdout: writer,
-        isTTY: false,
-        idleMs: 10,
-        interactiveGapMs: 5,
-        runtimeConfig: {
-          question: "Did the tests pass? Return PASS or FAIL.",
-          model: "qwen3.5:2b",
-          host: "http://127.0.0.1:11434/v1",
-          apiKey: "",
-          timeoutMs: 90_000,
-          datasetEnabled: true
-        },
-        dataset: {
-          enabled: true,
-          path: datasetPath
-        },
-        summarizer: {
-          summarizeBatch: async () =>
-            "distill: Insufficient information to output anything.",
-          summarizeWatch: async () => "unused"
-        }
-      });
-
-      session.push(
-        Buffer.from(
-          "command started but produced no useful rows, status lines, or final result\n"
-        )
-      );
-      await session.end();
-
-      const [line] = (await readFile(datasetPath, "utf8")).trim().split("\n");
-      const record = JSON.parse(line);
-
-      expect(writer.read()).toBe(
-        "distill: Insufficient information to output anything.\n"
-      );
-      expect(record.completion).toBe(
-        "distill: Insufficient information to output anything."
-      );
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("renders spinner progress and clears it before the final summary", async () => {
-    const writer = createWriter();
-    const progress = createWriter();
-    const session = new DistillSession({
-      stdout: writer,
-      progress,
-      isTTY: false,
-      idleMs: 10,
-      interactiveGapMs: 5,
-      progressFrameMs: 10,
-      summarizer: createDelayedSummarizer(50, "All tests passed")
-    });
-
-    await sleep(15);
-    session.push(Buffer.from("test output\n"));
-    await sleep(25);
-    await session.end();
-
-    expect(writer.read()).toContain("All tests passed\n");
-    expect(progress.read()).toContain("distill: waiting");
-    expect(progress.read()).toContain("distill: summarizing");
-    expect(progress.read().endsWith("\r\u001b[2K")).toBe(true);
-  });
-
-  it("keeps output clean when progress is disabled", async () => {
+  it("falls back to raw input when the summary is empty or invalid", async () => {
     const writer = createWriter();
     const session = new DistillSession({
       stdout: writer,
       isTTY: false,
-      idleMs: 10,
-      interactiveGapMs: 5,
-      progressFrameMs: 10,
-      summarizer: createDelayedSummarizer(50, "All tests passed")
+      summarizer: {
+        summarizeBatch: async () => "",
+        summarizeWatch: async () => "unused",
+      },
     });
 
-    session.push(Buffer.from("test output\n"));
-    await sleep(25);
+    session.push(Buffer.from("raw payload\n"));
     await session.end();
 
-    expect(writer.read()).toContain("All tests passed\n");
-  });
-
-  it("falls back to the raw input when batch distillation is empty", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "distill-session-dataset-"));
-    const datasetPath = path.join(dir, "distill.jsonl");
-    const writer = createWriter();
-
-    try {
-      const session = new DistillSession({
-        stdout: writer,
-        isTTY: false,
-        idleMs: 10,
-        interactiveGapMs: 5,
-        runtimeConfig: {
-          question: "Summarize.",
-          model: "qwen3.5:2b",
-          host: "http://127.0.0.1:11434/v1",
-          apiKey: "",
-          timeoutMs: 90_000,
-          datasetEnabled: true
-        },
-        dataset: {
-          enabled: true,
-          path: datasetPath
-        },
-        summarizer: {
-          summarizeBatch: async () => "",
-          summarizeWatch: async () => "unused"
-        }
-      });
-
-      session.push(Buffer.from("raw payload\n"));
-      await session.end();
-
-      expect(writer.read()).toBe("raw payload\n");
-      await expect(readFile(datasetPath, "utf8")).rejects.toThrow();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    expect(writer.read()).toBe("raw payload\n");
   });
 
   it("prints fallback reason when debug mode is enabled", async () => {
@@ -241,13 +60,11 @@ describe("DistillSession", () => {
       stdout,
       stderr,
       isTTY: false,
-      idleMs: 10,
-      interactiveGapMs: 5,
       debug: true,
       summarizer: {
         summarizeBatch: async () => "",
-        summarizeWatch: async () => "unused"
-      }
+        summarizeWatch: async () => "unused",
+      },
     });
 
     session.push(Buffer.from("raw payload\n"));
@@ -257,84 +74,31 @@ describe("DistillSession", () => {
     expect(stderr.read()).toContain("distill: debug: fallback=batch_bad_distillation");
   });
 
-  it("skips dataset writes when disabled", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "distill-session-dataset-"));
-    const datasetPath = path.join(dir, "distill.jsonl");
+  it("renders spinner progress and clears it before the final summary", async () => {
     const writer = createWriter();
-
-    try {
-      const session = new DistillSession({
-        stdout: writer,
-        isTTY: false,
-        idleMs: 10,
-        interactiveGapMs: 5,
-        runtimeConfig: {
-          question: "Did the tests pass?",
-          model: "qwen3.5:2b",
-          host: "http://127.0.0.1:11434/v1",
-          apiKey: "",
-          timeoutMs: 90_000,
-          datasetEnabled: false
+    const progress = createWriter();
+    const session = new DistillSession({
+      stdout: writer,
+      progress,
+      isTTY: false,
+      progressFrameMs: 10,
+      summarizer: {
+        summarizeBatch: async () => {
+          await sleep(30);
+          return "All tests passed";
         },
-        dataset: {
-          enabled: false,
-          path: datasetPath
-        },
-        summarizer: {
-          summarizeBatch: async () => "PASS",
-          summarizeWatch: async () => "unused"
-        }
-      });
+        summarizeWatch: async () => "unused",
+      },
+    });
 
-      session.push(Buffer.from("1 passed\n"));
-      await session.end();
+    await sleep(15);
+    session.push(Buffer.from("test output\n"));
+    await session.end();
 
-      expect(writer.read()).toBe("PASS\n");
-      await expect(readFile(datasetPath, "utf8")).rejects.toThrow();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("skips dataset writes when the summarizer throws", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "distill-session-dataset-"));
-    const datasetPath = path.join(dir, "distill.jsonl");
-    const writer = createWriter();
-
-    try {
-      const session = new DistillSession({
-        stdout: writer,
-        isTTY: false,
-        idleMs: 10,
-        interactiveGapMs: 5,
-        runtimeConfig: {
-          question: "Did the tests pass?",
-          model: "qwen3.5:2b",
-          host: "http://127.0.0.1:11434/v1",
-          apiKey: "",
-          timeoutMs: 90_000,
-          datasetEnabled: true
-        },
-        dataset: {
-          enabled: true,
-          path: datasetPath
-        },
-        summarizer: {
-          summarizeBatch: async () => {
-            throw new Error("request failed");
-          },
-          summarizeWatch: async () => "unused"
-        }
-      });
-
-      session.push(Buffer.from("raw payload\n"));
-      await session.end();
-
-      expect(writer.read()).toBe("raw payload\n");
-      await expect(readFile(datasetPath, "utf8")).rejects.toThrow();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    expect(writer.read()).toContain("All tests passed\n");
+    expect(progress.read()).toContain("distill: waiting");
+    expect(progress.read()).toContain("distill: summarizing");
+    expect(progress.read().endsWith("\r\u001b[2K")).toBe(true);
   });
 
   it("switches to passthrough for interactive prompts", async () => {
@@ -343,7 +107,6 @@ describe("DistillSession", () => {
     const session = new DistillSession({
       stdout: writer,
       isTTY: false,
-      idleMs: 50,
       interactiveGapMs: 10,
       summarizer: {
         summarizeBatch: async () => {
@@ -353,12 +116,12 @@ describe("DistillSession", () => {
         summarizeWatch: async () => {
           summarizeCalls += 1;
           return "never";
-        }
-      }
+        },
+      },
     });
 
     session.push(Buffer.from("Continue? [y/N]"));
-    await sleep(25);
+    await sleep(20);
     session.push(Buffer.from("\nyes\n"));
     await session.end();
 
@@ -366,7 +129,7 @@ describe("DistillSession", () => {
     expect(summarizeCalls).toBe(0);
   });
 
-  it("promotes recurring bursts to watch mode", async () => {
+  it("promotes recurring bursts to watch mode when enabled", async () => {
     const writer = createWriter();
     let watchCalls = 0;
     const session = new DistillSession({
@@ -380,77 +143,18 @@ describe("DistillSession", () => {
         summarizeWatch: async () => {
           watchCalls += 1;
           return "failure count changed";
-        }
-      }
+        },
+      },
     });
 
     session.push(Buffer.from("watch run\nfailed: 0\n"));
     await sleep(25);
     session.push(Buffer.from("watch run\nfailed: 1\n"));
-    await sleep(40);
+    await sleep(25);
     await session.end();
 
     expect(writer.read()).toBe("failure count changed\n");
     expect(watchCalls).toBe(1);
-  });
-
-  it("does not summarize recurring output before stdin ends by default", async () => {
-    const writer = createWriter();
-    let batchCalls = 0;
-    let watchCalls = 0;
-    const session = new DistillSession({
-      stdout: writer,
-      isTTY: false,
-      idleMs: 15,
-      interactiveGapMs: 5,
-      summarizer: {
-        summarizeBatch: async () => {
-          batchCalls += 1;
-          return "final batch summary";
-        },
-        summarizeWatch: async () => {
-          watchCalls += 1;
-          return "early watch summary";
-        }
-      }
-    });
-
-    session.push(Buffer.from("watch run\nfailed: 0\n"));
-    await sleep(25);
-    session.push(Buffer.from("watch run\nfailed: 1\n"));
-    await sleep(40);
-
-    expect(writer.read()).toBe("");
-    expect(watchCalls).toBe(0);
-
-    await session.end();
-
-    expect(writer.read()).toBe("final batch summary\n");
-    expect(batchCalls).toBe(1);
-    expect(watchCalls).toBe(0);
-  });
-
-  it("clears the terminal when rendering watch output on a tty", async () => {
-    const writer = createWriter();
-    const session = new DistillSession({
-      stdout: writer,
-      isTTY: true,
-      idleMs: 15,
-      interactiveGapMs: 5,
-      watchMode: true,
-      summarizer: {
-        summarizeBatch: async () => "unused",
-        summarizeWatch: async () => "watch summary"
-      }
-    });
-
-    session.push(Buffer.from("watch run\nfailed: 0\n"));
-    await sleep(25);
-    session.push(Buffer.from("watch run\nfailed: 1\n"));
-    await sleep(40);
-    await session.end();
-
-    expect(writer.read()).toBe("\u001b[2J\u001b[Hwatch summary\n");
   });
 
   it("keeps ambiguous multi-burst output in batch mode", async () => {
@@ -466,8 +170,8 @@ describe("DistillSession", () => {
           batchCalls += 1;
           return "batch summary";
         },
-        summarizeWatch: async () => "watch summary"
-      }
+        summarizeWatch: async () => "watch summary",
+      },
     });
 
     session.push(Buffer.from("phase one\n"));
@@ -477,165 +181,5 @@ describe("DistillSession", () => {
 
     expect(writer.read()).toBe("batch summary\n");
     expect(batchCalls).toBe(1);
-  });
-
-  it("does not promote unrelated three-phase output to watch", async () => {
-    const writer = createWriter();
-    let batchCalls = 0;
-    let watchCalls = 0;
-    const session = new DistillSession({
-      stdout: writer,
-      isTTY: false,
-      idleMs: 10,
-      interactiveGapMs: 5,
-      summarizer: {
-        summarizeBatch: async () => {
-          batchCalls += 1;
-          return "batch summary";
-        },
-        summarizeWatch: async () => {
-          watchCalls += 1;
-          return "watch summary";
-        }
-      }
-    });
-
-    session.push(Buffer.from("alpha phase\n"));
-    await sleep(20);
-    session.push(Buffer.from("beta section\n"));
-    await sleep(20);
-    session.push(Buffer.from("gamma tail\n"));
-    await session.end();
-
-    expect(writer.read()).toBe("batch summary\n");
-    expect(batchCalls).toBe(1);
-    expect(watchCalls).toBe(0);
-  });
-
-  it("emits a one-time privacy notice on the first dataset write", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "distill-session-notice-"));
-    const datasetPath = path.join(dir, "distill.jsonl");
-    const runtimeConfig = {
-      question: "Did the tests pass?",
-      model: "qwen3.5:2b",
-      host: "http://127.0.0.1:11434/v1",
-      apiKey: "",
-      timeoutMs: 90_000,
-      datasetEnabled: true
-    } as const;
-
-    try {
-      const stdoutFirst = createWriter();
-      const stderrFirst = createWriter();
-      const firstSession = new DistillSession({
-        stdout: stdoutFirst,
-        stderr: stderrFirst,
-        isTTY: false,
-        idleMs: 10,
-        interactiveGapMs: 5,
-        runtimeConfig,
-        dataset: { enabled: true, path: datasetPath },
-        summarizer: {
-          summarizeBatch: async () => "PASS",
-          summarizeWatch: async () => "unused"
-        }
-      });
-
-      firstSession.push(Buffer.from("1 passed\n"));
-      await firstSession.end();
-
-      expect(stderrFirst.read()).toContain("capturing fine-tuning data");
-      expect(stderrFirst.read()).toContain(datasetPath);
-
-      const stdoutSecond = createWriter();
-      const stderrSecond = createWriter();
-      const secondSession = new DistillSession({
-        stdout: stdoutSecond,
-        stderr: stderrSecond,
-        isTTY: false,
-        idleMs: 10,
-        interactiveGapMs: 5,
-        runtimeConfig,
-        dataset: { enabled: true, path: datasetPath },
-        summarizer: {
-          summarizeBatch: async () => "PASS",
-          summarizeWatch: async () => "unused"
-        }
-      });
-
-      secondSession.push(Buffer.from("1 passed\n"));
-      await secondSession.end();
-
-      expect(stderrSecond.read()).not.toContain("capturing fine-tuning data");
-
-      const lines = (await readFile(datasetPath, "utf8")).trim().split("\n");
-      expect(lines).toHaveLength(2);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not emit the privacy notice when dataset capture is disabled", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "distill-session-notice-off-"));
-    const datasetPath = path.join(dir, "distill.jsonl");
-    const stdout = createWriter();
-    const stderr = createWriter();
-
-    try {
-      const session = new DistillSession({
-        stdout,
-        stderr,
-        isTTY: false,
-        idleMs: 10,
-        interactiveGapMs: 5,
-        runtimeConfig: {
-          question: "Did the tests pass?",
-          model: "qwen3.5:2b",
-          host: "http://127.0.0.1:11434/v1",
-          apiKey: "",
-          timeoutMs: 90_000,
-          datasetEnabled: false
-        },
-        dataset: { enabled: false, path: datasetPath },
-        summarizer: {
-          summarizeBatch: async () => "PASS",
-          summarizeWatch: async () => "unused"
-        }
-      });
-
-      session.push(Buffer.from("1 passed\n"));
-      await session.end();
-
-      expect(stderr.read()).not.toContain("capturing fine-tuning data");
-      await expect(readFile(datasetPath, "utf8")).rejects.toThrow();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("clears the progress line before switching to interactive passthrough", async () => {
-    const writer = createWriter();
-    const progress = createWriter();
-    const session = new DistillSession({
-      stdout: writer,
-      progress,
-      isTTY: false,
-      idleMs: 50,
-      interactiveGapMs: 12,
-      progressFrameMs: 10,
-      summarizer: {
-        summarizeBatch: async () => "never",
-        summarizeWatch: async () => "never"
-      }
-    });
-
-    session.push(Buffer.from("Continue? [y/N]"));
-    await sleep(35);
-    session.push(Buffer.from("\nyes\n"));
-    await session.end();
-
-    expect(writer.read()).toBe("Continue? [y/N]\nyes\n");
-    expect(progress.read()).toContain("distill: waiting");
-    expect(progress.read().endsWith("\r\u001b[2K")).toBe(true);
   });
 });

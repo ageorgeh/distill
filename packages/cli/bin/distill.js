@@ -73,25 +73,6 @@ const PROGRESS_LABELS = {
   summarizing: "distill: summarizing"
 };
 
-function resolvePackageRootForConfig() {
-  const workspaceRoot = path.resolve(__dirname, "..", "..", "..");
-  const workspacePackageJson = path.join(workspaceRoot, "package.json");
-
-  if (fs.existsSync(workspacePackageJson)) {
-    try {
-      const manifest = JSON.parse(fs.readFileSync(workspacePackageJson, "utf8"));
-
-      if (manifest.name === "distill-workspace") {
-        return workspaceRoot;
-      }
-    } catch {
-      // Fall through to the package root when the workspace manifest is unreadable.
-    }
-  }
-
-  return path.resolve(__dirname, "..");
-}
-
 const binPath = resolveBinaryPath();
 const progressWriter = process.stderr.isTTY ? process.stderr : process.stdout.isTTY ? process.stdout : null;
 let progressPhase = "collecting";
@@ -181,11 +162,7 @@ function flushChildStderr(force = false) {
 
 const child = spawn(binPath, process.argv.slice(2), {
   stdio: ["inherit", "pipe", "pipe"],
-  env: {
-    ...process.env,
-    DISTILL_PACKAGE_ROOT: resolvePackageRootForConfig(),
-    DISTILL_PROGRESS_PROTOCOL: "stderr"
-  }
+  env: { ...process.env, DISTILL_PROGRESS_PROTOCOL: "stderr" }
 });
 
 startProgress();

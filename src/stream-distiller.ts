@@ -3,12 +3,6 @@ import {
   DEFAULT_INTERACTIVE_GAP_MS,
   DEFAULT_PROGRESS_FRAME_MS
 } from "./config";
-import type { RuntimeConfig } from "./config";
-import {
-  appendDatasetRecord,
-  buildDatasetRecord,
-  type DatasetAppendConfig
-} from "./dataset";
 import {
   ensureTrailingNewline,
   hasPromptLikeTail,
@@ -41,15 +35,12 @@ export interface Summarizer {
 
 export interface DistillSessionOptions {
   summarizer: Summarizer;
-  runtimeConfig?: RuntimeConfig;
-  dataset?: DatasetAppendConfig;
   stdout: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
   isTTY: boolean;
   progress?: Pick<NodeJS.WriteStream, "write">;
   onProgressPhase?: (phase: ProgressPhase) => void;
   onProgressStop?: () => void;
-  onBatchOutput?: (output: string) => Promise<void>;
   idleMs?: number;
   interactiveGapMs?: number;
   progressFrameMs?: number;
@@ -59,15 +50,12 @@ export interface DistillSessionOptions {
 
 export class DistillSession {
   private readonly summarizer: Summarizer;
-  private readonly runtimeConfig: RuntimeConfig | null;
-  private readonly dataset: DatasetAppendConfig | null;
   private readonly stdout: Pick<NodeJS.WriteStream, "write">;
   private readonly stderr: Pick<NodeJS.WriteStream, "write"> | null;
   private readonly isTTY: boolean;
   private readonly progress: Pick<NodeJS.WriteStream, "write"> | null;
   private readonly onProgressPhase: ((phase: ProgressPhase) => void) | null;
   private readonly onProgressStop: (() => void) | null;
-  private readonly onBatchOutput: ((output: string) => Promise<void>) | null;
   private readonly idleMs: number;
   private readonly interactiveGapMs: number;
   private readonly progressFrameMs: number;
@@ -93,15 +81,12 @@ export class DistillSession {
 
   constructor(options: DistillSessionOptions) {
     this.summarizer = options.summarizer;
-    this.runtimeConfig = options.runtimeConfig ?? null;
-    this.dataset = options.dataset ?? null;
     this.stdout = options.stdout;
     this.stderr = options.stderr ?? null;
     this.isTTY = options.isTTY;
     this.progress = options.progress ?? null;
     this.onProgressPhase = options.onProgressPhase ?? null;
     this.onProgressStop = options.onProgressStop ?? null;
-    this.onBatchOutput = options.onBatchOutput ?? null;
     this.idleMs = options.idleMs ?? DEFAULT_IDLE_MS;
     this.interactiveGapMs = options.interactiveGapMs ?? DEFAULT_INTERACTIVE_GAP_MS;
     this.progressFrameMs = options.progressFrameMs ?? DEFAULT_PROGRESS_FRAME_MS;
@@ -177,47 +162,12 @@ export class DistillSession {
       );
       this.stopProgress(true);
       this.stdout.write(ensureTrailingNewline(output));
-      await this.captureDatasetRecord(normalizedInput, output);
-      await this.captureDslLearning(output);
     } catch (error) {
       this.debugLog(
         `fallback=batch_error reason=${this.formatErrorReason(error)} bytes=${rawInput.length}`
       );
       this.stopProgress(true);
       this.stdout.write(Buffer.concat(this.rawBuffers));
-    }
-  }
-
-  private async captureDslLearning(output: string): Promise<void> {
-    if (!this.onBatchOutput || !output) {
-      return;
-    }
-
-    try {
-      await this.onBatchOutput(output);
-    } catch {
-      this.stderr?.write("distill: failed to update DSL memory.\n");
-    }
-  }
-
-  private async captureDatasetRecord(input: string, output: string): Promise<void> {
-    if (!this.dataset || !this.runtimeConfig || !output) {
-      return;
-    }
-
-    try {
-      const result = await appendDatasetRecord(
-        this.dataset,
-        buildDatasetRecord(this.runtimeConfig, input, output)
-      );
-
-      if (result.firstWrite && this.dataset.enabled) {
-        this.stderr?.write(
-          `distill: capturing fine-tuning data at ${this.dataset.path}; disable with DISTILL_DATASET_ENABLED=false\n`
-        );
-      }
-    } catch {
-      this.stderr?.write("distill: failed to write dataset record.\n");
     }
   }
 

@@ -1,18 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import {
-  chmod,
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile
-} from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import cliPackage from "../packages/cli/package.json";
-import { readPersistedConfig } from "../src/user-config";
 import { createScriptCommand } from "./script-command";
 
 const root = path.resolve(import.meta.dir, "..");
@@ -23,47 +14,53 @@ describe("cli entrypoint", () => {
   it("prints help", () => {
     const result = spawnSync("bun", ["run", cli, "--help"], {
       cwd: root,
-      encoding: "utf8"
+      encoding: "utf8",
     });
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('cmd 2>&1 | distill "question"');
+    expect(result.stdout).toContain("distill.config.ts");
   });
 
   it("prints the version", () => {
     const result = spawnSync("bun", ["run", cli, "--version"], {
       cwd: root,
-      encoding: "utf8"
+      encoding: "utf8",
     });
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe(cliPackage.version);
   });
 
-  it("prints safe runtime and request diagnostics in debug mode", () => {
-    const result = spawnSync(
-      "bun",
-      ["run", cli, "--provider", "codex", "--model", "debug-model", "--debug", "summarize"],
-      {
-        cwd: root,
-        encoding: "utf8",
-        input: "raw command output\n",
-        env: {
-          ...process.env,
-          DISTILL_CODEX_COMMAND: "distill-test-missing-codex-command",
-          DISTILL_DATASET_ENABLED: "false"
-        }
-      }
-    );
+  it("reads provider settings from distill.config.ts and keeps debug as an action flag", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "distill-cli-config-"));
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe("raw command output\n");
-    expect(result.stderr).toContain("distill: debug: runtime");
-    expect(result.stderr).toContain("mode=stream provider=codex model=\"debug-model\"");
-    expect(result.stderr).toContain('command="distill-test-missing-codex-command"');
-    expect(result.stderr).toContain("request=batch status=start input_bytes=19");
-    expect(result.stderr).toContain("fallback=batch_error");
-    expect(result.stderr).not.toContain("apiKey");
+    try {
+      await writeFile(
+        path.join(dir, "distill.config.ts"),
+        'export default { provider: "codex", codexModel: "debug-model", codexCommand: "distill-test-missing-codex-command" };\n',
+      );
+
+      const result = spawnSync(
+        "bun",
+        ["run", cli, "--debug", "summarize"],
+        {
+          cwd: dir,
+          encoding: "utf8",
+          input: "raw command output\n",
+        },
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("raw command output\n");
+      expect(result.stderr).toContain("distill: debug: runtime");
+      expect(result.stderr).toContain('provider=codex model="debug-model"');
+      expect(result.stderr).toContain('command="distill-test-missing-codex-command"');
+      expect(result.stderr).toContain("fallback=batch_error");
+      expect(result.stderr).not.toContain("apiKey");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("fails on unsupported platforms", () => {
@@ -72,12 +69,9 @@ describe("cli entrypoint", () => {
       "node",
       [
         "-e",
-        `Object.defineProperty(process, "platform", { value: "haiku" }); Object.defineProperty(process, "arch", { value: "x64" }); require(${launcher});`
+        `Object.defineProperty(process, "platform", { value: "haiku" }); Object.defineProperty(process, "arch", { value: "x64" }); require(${launcher});`,
       ],
-      {
-        cwd: root,
-        encoding: "utf8"
-      }
+      { cwd: root, encoding: "utf8" },
     );
 
     expect(result.status).toBe(1);
@@ -88,249 +82,14 @@ describe("cli entrypoint", () => {
     const scriptCommand = createScriptCommand("/dev/null", "bun", [
       "run",
       cli,
-      "is this safe?"
+      "is this safe?",
     ]);
     const result = spawnSync(scriptCommand.command, scriptCommand.args, {
       cwd: root,
-      encoding: "utf8"
+      encoding: "utf8",
     });
 
     expect(result.status).toBe(2);
     expect(`${result.stdout}${result.stderr}`).toContain("stdin is required.");
-  });
-
-  it("directs removed config commands to distill.config.ts", () => {
-    const result = spawnSync("bun", ["run", cli, "config", "provider", "codex"], {
-      cwd: root,
-      encoding: "utf8"
-    });
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("Edit distill.config.ts instead");
-  });
-
-  it("runs dsl memory commands", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "distill-cli-dsl-"));
-    const configPath = path.join(dir, "distill.config.ts");
-    const env = {
-      ...process.env,
-      DISTILL_CONFIG_PATH: configPath
-    };
-
-    try {
-      const addFirst = spawnSync(
-        "bun",
-        ["run", cli, "dsl", "add", "alias", "A1", "authentication fix", "--scope", "global"],
-        { cwd: root, encoding: "utf8", env }
-      );
-      const addSecond = spawnSync(
-        "bun",
-        ["run", cli, "dsl", "add", "alias", "A1", "authentication fix", "--scope", "global"],
-        { cwd: root, encoding: "utf8", env }
-      );
-      const show = spawnSync("bun", ["run", cli, "dsl", "show", "--scope", "global"], {
-        cwd: root,
-        encoding: "utf8",
-        env
-      });
-
-      expect(addFirst.status).toBe(0);
-      expect(addFirst.stdout).toContain("candidate A1");
-      expect(addSecond.status).toBe(0);
-      expect(addSecond.stdout).toContain("active A1");
-      expect(show.status).toBe(0);
-      expect(show.stdout).toContain("A1\talias\tactive");
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("runs onboarding with local model and skill install defaults", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "distill-onboarding-"));
-    const home = path.join(dir, "home");
-    const configPath = path.join(dir, "distill.config.ts");
-    const oldBlock = [
-      "keep before",
-      "<!-- distill skill: begin -->",
-      "old distill instructions",
-      "<!-- distill skill: end -->",
-      "keep after"
-    ].join("\n");
-
-    try {
-      await mkdir(path.join(home, ".codex"), { recursive: true });
-      await mkdir(path.join(home, ".claude"), { recursive: true });
-      await writeFile(path.join(home, ".codex", "AGENTS.md"), oldBlock);
-      await writeFile(path.join(home, ".claude", "CLAUDE.md"), oldBlock);
-
-      const result = spawnSync("bun", ["run", cli, "onboard"], {
-        cwd: root,
-        encoding: "utf8",
-        input: [
-          "",
-          "",
-          "",
-          "",
-          "",
-          "120000",
-          ""
-        ].join("\n"),
-        env: {
-          ...process.env,
-          HOME: home,
-          USERPROFILE: home,
-          DISTILL_CONFIG_PATH: configPath,
-          DISTILL_PACKAGE_ROOT: root,
-          DISTILL_ONBOARDING_PRELOAD: "false"
-        }
-      });
-
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain("distill onboarding");
-      expect(result.stdout).toContain("/distill skill installed for Codex and Claude");
-      expect(await readPersistedConfig({ DISTILL_CONFIG_PATH: configPath })).toEqual({
-        provider: "local",
-        localBackend: "auto",
-        localConcurrency: 5,
-        localHost: "127.0.0.1",
-        localPort: 8009,
-        timeoutMs: 120000
-      });
-      const dslMemory = JSON.parse(
-        await readFile(path.join(dir, "dsl", "global.json"), "utf8")
-      ) as { entries: Array<{ key: string; status: string; builtin?: boolean }> };
-
-      expect(dslMemory.entries).toEqual([]);
-      expect(
-        await readFile(
-          path.join(home, ".codex", "skills", "distill", "SKILL.md"),
-          "utf8"
-        )
-      ).toContain("name: distill");
-      expect(
-        await readFile(
-          path.join(home, ".claude", "skills", "distill", "SKILL.md"),
-          "utf8"
-        )
-      ).toContain("name: distill");
-      const codexInstructions = await readFile(
-        path.join(home, ".codex", "AGENTS.md"),
-        "utf8"
-      );
-      const claudeInstructions = await readFile(
-        path.join(home, ".claude", "CLAUDE.md"),
-        "utf8"
-      );
-
-      for (const instructions of [codexInstructions, claudeInstructions]) {
-        expect(instructions).toContain("keep before");
-        expect(instructions).toContain("keep after");
-        expect(instructions).not.toContain("old distill instructions");
-        expect(
-          instructions.match(/<!-- distill skill: begin -->/g) ?? []
-        ).toHaveLength(1);
-        expect(instructions).toContain("Always communicate with the user in `/distill`");
-        expect(instructions).toContain(
-          "Do not return a rewritten/compressed copy of the user's prompt"
-        );
-        expect(instructions).toContain("Keep hidden chain-of-thought private");
-        expect(instructions).toContain("fixed prefixes S/C/D/R/O/N/P");
-        expect(instructions).toContain("task aliases A/B/F/E/V/X/U/DB/CFG/DOC/PERM");
-        expect(instructions).toContain(
-          "Dict: S=state C=context D=action R=risk O=outcome N=no-go P=proof"
-        );
-        expect(instructions).toContain("shortest unambiguous key possible");
-        expect(instructions).toContain(
-          "For every non-interactive, non-TUI shell/tool command, pipe output through `distill`"
-        );
-        expect(instructions).toContain(
-          "Skip `| distill` only when exact raw output is required"
-        );
-        expect(instructions).toContain(
-          'bun test 2>&1 | distill "Did tests pass? Return PASS or FAIL'
-        );
-        expect(instructions).toContain(
-          'git diff | distill "What changed? Return only files changed'
-        );
-        expect(instructions).toContain(
-          'terraform plan 2>&1 | distill "Is this safe? Return SAFE, REVIEW, or UNSAFE'
-        );
-      }
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("runs onboarding with external API config when explicitly selected", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "distill-onboarding-external-"));
-    const home = path.join(dir, "home");
-    const configPath = path.join(dir, "distill.config.ts");
-
-    try {
-      const result = spawnSync("bun", ["run", cli, "onboard"], {
-        cwd: root,
-        encoding: "utf8",
-        input: [
-          "external",
-          "http://127.0.0.1:1234/v1",
-          "external-model",
-          "test-key",
-          "120000",
-          "n"
-        ].join("\n"),
-        env: {
-          ...process.env,
-          HOME: home,
-          USERPROFILE: home,
-          DISTILL_CONFIG_PATH: configPath,
-          DISTILL_PACKAGE_ROOT: root
-        }
-      });
-
-      expect(result.status).toBe(0);
-      expect(await readPersistedConfig({ DISTILL_CONFIG_PATH: configPath })).toEqual({
-        provider: "external",
-        host: "http://127.0.0.1:1234/v1",
-        model: "external-model",
-        apiKey: "test-key",
-        timeoutMs: 120000
-      });
-      expect(result.stdout).toContain("skill install skipped");
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  itUnixOnly("falls back to the workspace binary when the platform package is not installed", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "distill-workspace-fallback-"));
-    const fakeTargetDir = path.join(
-      dir,
-      "packages",
-      `distill-${process.platform}-${process.arch}`,
-      "bin"
-    );
-    const launcherPath = path.join(dir, "packages", "cli", "bin", "distill.js");
-    const fakeBinaryPath = path.join(fakeTargetDir, "distill");
-
-    try {
-      await mkdir(path.dirname(launcherPath), { recursive: true });
-      await mkdir(fakeTargetDir, { recursive: true });
-      await copyFile(path.join(root, "packages", "cli", "bin", "distill.js"), launcherPath);
-      await writeFile(
-        fakeBinaryPath,
-        "#!/bin/sh\nprintf 'workspace fallback\\n'\n"
-      );
-      await chmod(fakeBinaryPath, 0o755);
-
-      const result = spawnSync("node", [launcherPath, "--version"], {
-        cwd: dir,
-        encoding: "utf8"
-      });
-
-      expect(result.status).toBe(0);
-      expect(result.stdout).toBe("workspace fallback\n");
-      expect(result.stderr).toBe("");
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
   });
 });

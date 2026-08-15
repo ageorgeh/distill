@@ -3,8 +3,6 @@ import { describe, expect, it } from "bun:test";
 import {
   chatCompletion,
   summarizeBatch,
-  summarizeDslPromotion,
-  summarizeThreadLearn,
   summarizeTranslate,
   summarizeWatch
 } from "../src/llm";
@@ -20,8 +18,7 @@ const baseConfig: RuntimeConfig = {
   model: "qwen3.5:2b",
   host: "http://127.0.0.1:11434/v1",
   apiKey: "",
-  timeoutMs: 100,
-  datasetEnabled: false
+  timeoutMs: 100
 };
 
 describe("chatCompletion", () => {
@@ -167,9 +164,7 @@ describe("summarizeBatch", () => {
     expect(await summarizeBatch(config, "batch", dependencies, noFetch)).toBe("CODEX");
     expect(await summarizeTranslate(config, "text", "en", noFetch, dependencies)).toBe("CODEX");
     expect(await summarizeWatch(config, "old", "new", noFetch, dependencies)).toBe("CODEX");
-    expect(await summarizeDslPromotion(config, "entries", noFetch, dependencies)).toBe("CODEX");
-    expect(await summarizeThreadLearn(config, "transcript", [], "memory", noFetch, dependencies)).toBe("CODEX");
-    expect(calls).toHaveLength(5);
+    expect(calls).toHaveLength(3);
   });
 
   it("starts the local server before sending local-provider requests", async () => {
@@ -323,103 +318,19 @@ describe("summarizeBatch", () => {
     expect(body.messages[1].content).toContain(baseConfig.question);
   });
 
-  it("always tells the model to create efficient inline variables", async () => {
-    let requestBody: unknown;
-
-    const output = await summarizeBatch(
-      baseConfig,
-      "cache warmed\ncache reused\nmodel loaded\nmodel reused",
-      async (_, init) => {
-        requestBody = JSON.parse(String(init?.body ?? "{}"));
-
-        return new Response(
-          JSON.stringify({
-            choices: [{ message: { content: "S cache=#c1 model=#m1\nO #c1 + #m1 reused" } }]
-          }),
-          { status: 200 }
-        );
-      }
-    );
-
-    const body = requestBody as {
-      messages: Array<{ role: string; content: string }>;
-    };
-
-    expect(output).toContain("#c1");
-    expect(body.messages[0].content).toContain("Inline variable rule");
-    expect(body.messages[0].content).toContain("Before every visible response");
-    expect(body.messages[0].content).toContain("visible transcript plus the draft response");
-    expect(body.messages[0].content).toContain("appears 2+ times");
-    expect(body.messages[0].content).toContain("<term>=#<letter><digit>");
-    expect(body.messages[0].content).toContain("project nouns");
-    expect(body.messages[0].content).toContain("Visible transcript is the canonical Dict state");
-    expect(body.messages[0].content).toContain("Dict delta rule");
-    expect(body.messages[0].content).toContain("only with newly introduced variables");
-    expect(body.messages[0].content).toContain("omit Dict instead of restating old definitions");
-    expect(body.messages[0].content).toContain("Substitution pass");
-    expect(body.messages[0].content).toContain("replace every later safe occurrence");
-    expect(body.messages[0].content).not.toContain("Known /distill DSL memory");
-    expect(body.messages[0].content).not.toContain("workspace=#w3");
-  });
-
-  it("injects compact DSL memory into the batch system prompt", async () => {
-    let requestBody: unknown;
-
-    const output = await summarizeBatch(
-      baseConfig,
-      "auth failed",
-      { dslMemory: "AUTH = authentication fix (alias, project)" },
-      async (_, init) => {
-        requestBody = JSON.parse(String(init?.body ?? "{}"));
-
-        return new Response(
-          JSON.stringify({
-            choices: [{ message: { content: "AUTH fixed" } }]
-          }),
-          { status: 200 }
-        );
-      }
-    );
-
-    const body = requestBody as {
-      messages: Array<{ role: string; content: string }>;
-    };
-
-    expect(output).toBe("AUTH fixed");
-    expect(body.messages[0].content).toContain("Known /distill DSL memory");
-    expect(body.messages[0].content).toContain(
-      "AUTH = authentication fix (alias, project)"
-    );
-    expect(body.messages[0].content).toContain("Inline variable rule");
-    expect(body.messages[0].content).toContain("Before every visible response");
-    expect(body.messages[0].content).toContain("Visible transcript is the canonical Dict state");
-    expect(body.messages[0].content).toContain("<term>=#<letter><digit>");
-    expect(body.messages[0].content).toContain("Dict delta rule");
-    expect(body.messages[0].content).toContain("do not repeat variables already defined");
-    expect(body.messages[0].content).toContain("Substitution pass");
-    expect(body.messages[0].content).toContain("exact model ID");
-    expect(body.messages[0].content).toContain("There is no fixed variable list");
-    expect(body.messages[0].content).not.toContain("workspace=#w3");
-    expect(body.messages[0].content).toContain("Emit Dict+ only");
-  });
 });
 
 describe("summarizeTranslate", () => {
-  it("asks the provider to expand /distill Military English into human language", async () => {
+  it("asks the provider to translate compressed output into human language", async () => {
     let systemContent = "";
     let userContent = "";
 
     const output = await summarizeTranslate(
       baseConfig,
       [
-        "Dict: be=backend fe=frontend",
         "Best:",
         "Fix auth bug.",
-        "Add failing test first.",
-        "No fe change.",
         "Pass: valid user allowed, tests pass.",
-        "More aggressive:",
-        "Fix be auth only.",
         "Tradeoff:",
         "Less context for reviewer."
       ].join("\n"),
@@ -447,12 +358,10 @@ describe("summarizeTranslate", () => {
     );
 
     expect(output).toBe("Done because tests passed. Next step: ship it.");
-    expect(systemContent).toContain("Military English");
+    expect(systemContent).toContain("compressed language");
     expect(systemContent).toContain("Best");
-    expect(systemContent).toContain("Dict");
     expect(systemContent).toContain("Pass");
-    expect(userContent).toContain("Dict: be=backend fe=frontend");
-    expect(userContent).toContain("No fe change.");
+    expect(userContent).toContain("Fix auth bug.");
     expect(userContent).toContain("en-US");
   });
 });

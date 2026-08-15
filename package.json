@@ -1,8 +1,13 @@
 {
   "name": "distill-workspace",
+  "version": "1.5.2",
   "private": true,
-  "packageManager": "pnpm@11.1.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samuelfaj/distill"
+  },
   "scripts": {
+    "install:local": "pnpm install && pnpm build && cd packages/cli && pnpm link . --global",
     "build:bins": "bun run scripts/build-binaries.ts",
     "sync:platforms": "bun run scripts/sync-platform-packages.ts",
     "build": "pnpm run build:bins && pnpm run sync:platforms",
@@ -13,12 +18,5 @@
     "release:check": "bun run scripts/release-check.ts",
     "verify": "pnpm run test && pnpm run build && pnpm run release:check"
   },
-  "version": "1.5.2",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/samuelfaj/distill"
-  },
-  "devDependencies": {
-    "@clack/prompts": "0.11.0"
-  }
+  "packageManager": "pnpm@11.1.1"
 }

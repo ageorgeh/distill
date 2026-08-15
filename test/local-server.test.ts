@@ -27,7 +27,6 @@ function localConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
     host: "http://127.0.0.1:8009/v1",
     apiKey: "",
     timeoutMs: 90_000,
-    datasetEnabled: false,
     ...overrides
   };
 }

@@ -247,7 +247,7 @@ async function withStartupLock(
   env: NodeJS.ProcessEnv,
   callback: () => Promise<void>
 ): Promise<void> {
-  const lockPath = path.join(resolveConfigBaseDir(env), "local-server.lock");
+  const lockPath = path.join(resolveConfigBaseDir(), "local-server.lock");
   await mkdir(path.dirname(lockPath), { recursive: true });
   const deadline = Date.now() + 30_000;
   const owner = await currentStartupLockOwner();
@@ -563,7 +563,7 @@ async function downloadOfficialLlamaServer(
   }
 
   const runtimeDir = path.join(
-    resolveConfigBaseDir(env),
+    resolveConfigBaseDir(),
     "runtimes",
     "llama.cpp",
     release.tag_name
@@ -716,7 +716,7 @@ async function spawnLocalServer(
 }
 
 function localServerLogPath(env: NodeJS.ProcessEnv): string {
-  return path.join(resolveConfigBaseDir(env), "logs", "local-server.log");
+  return path.join(resolveConfigBaseDir(), "logs", "local-server.log");
 }
 
 async function resolveRuntimeOverridePath(
