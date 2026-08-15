@@ -328,8 +328,8 @@ export class DistillSession {
       return false;
     }
 
-    const previous = this.completedBursts[this.completedBursts.length - 2];
-    const current = this.completedBursts[this.completedBursts.length - 1];
+    const previous = this.completedBursts[this.completedBursts.length - 2]!;
+    const current = this.completedBursts[this.completedBursts.length - 1]!;
     const similarity = structuralSimilarity(previous.raw, current.raw);
 
     return this.sawRedraw || similarity >= 0.55;
@@ -351,8 +351,8 @@ export class DistillSession {
       return;
     }
 
-    const previous = this.completedBursts[this.completedBursts.length - 2];
-    const current = this.completedBursts[this.completedBursts.length - 1];
+    const previous = this.completedBursts[this.completedBursts.length - 2]!;
+    const current = this.completedBursts[this.completedBursts.length - 1]!;
     const key = `${previous.id}:${current.id}`;
 
     if (this.renderedPairs.has(key)) {
@@ -423,7 +423,7 @@ export class DistillSession {
     let remaining = 256;
 
     for (let index = this.rawBuffers.length - 1; index >= 0 && remaining > 0; index -= 1) {
-      const chunk = this.rawBuffers[index];
+      const chunk = this.rawBuffers[index]!;
 
       if (chunk.length <= remaining) {
         tailBuffers.unshift(chunk);

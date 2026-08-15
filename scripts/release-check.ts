@@ -16,7 +16,9 @@ const workspacePackages = [
 
 const binaries = requirePublishMetadata
   ? PLATFORM_TARGETS.map((target) => target.packageBinaryPath)
-  : [getPlatformTarget(currentPlatformKey)?.packageBinaryPath].filter(Boolean);
+  : [getPlatformTarget(currentPlatformKey)?.packageBinaryPath].filter(
+      (binary): binary is string => Boolean(binary),
+    );
 
 const manifests = await Promise.all(
   workspacePackages.map(async (relativePath) => {
@@ -40,6 +42,10 @@ if (binaries.length === 0) {
 }
 
 const cliManifest = manifests[0];
+
+if (!cliManifest) {
+  throw new Error("Workspace is missing its CLI package manifest.");
+}
 
 if (cliManifest.name !== "@samuelfaj/distill") {
   throw new Error("Main package name must stay @samuelfaj/distill.");

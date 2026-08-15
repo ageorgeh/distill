@@ -8,6 +8,11 @@ import { pipeline } from "node:stream/promises";
 import type { LocalBackend, RuntimeConfig } from "./config";
 import { resolveConfigBaseDir } from "./user-config";
 
+type FetchImplementation = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
+
 export type ResolvedLocalBackend = "mlx" | "llamacpp";
 
 export interface ProbeResult {
@@ -23,7 +28,7 @@ interface EnsureLocalServerOptions {
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform | string;
   arch?: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: FetchImplementation;
   probeServer?: (config: RuntimeConfig) => Promise<ProbeResult>;
   installRuntime?: (
     backend: ResolvedLocalBackend,
@@ -52,8 +57,8 @@ const EXTRA_EXECUTABLE_DIRS = [
 
 export function resolveLocalBackend(
   backend: LocalBackend,
-  platform = process.platform,
-  arch = process.arch
+  platform: string = process.platform,
+  arch: string = process.arch
 ): ResolvedLocalBackend {
   if (backend !== "auto") {
     return backend;
@@ -171,7 +176,7 @@ export async function ensureLocalServer(
 
 async function probeLocalServer(
   config: RuntimeConfig,
-  fetchImpl: typeof fetch
+  fetchImpl: FetchImplementation
 ): Promise<ProbeResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1_000);

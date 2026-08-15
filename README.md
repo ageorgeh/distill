@@ -61,3 +61,9 @@ distill translate "PASS tests pass" en-US
 
 When a provider request fails or the output looks unsuitable for compression,
 `distill` returns the original command output.
+
+## Making changes
+
+After making changes, run `pnpm run verify`. This is the regular validation
+process and runs TypeScript checking, the test suite, the build, and the release
+check in order.

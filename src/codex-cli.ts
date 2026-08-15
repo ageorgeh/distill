@@ -17,7 +17,7 @@ Follow the supplied distill formatting and safety contract exactly.`;
 
 export interface CodexCliDependencies {
   spawn: typeof spawn;
-  mkdtemp: typeof mkdtemp;
+  mkdtemp: (prefix: string) => Promise<string>;
   writeFile: typeof writeFile;
   readFile: typeof readFile;
   rm: typeof rm;

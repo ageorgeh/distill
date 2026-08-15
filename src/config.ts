@@ -88,10 +88,7 @@ function normalizeLocalHost(input: string | undefined): string {
   return value;
 }
 
-function coercePositiveInteger(
-  input: string | number | undefined,
-  label: string,
-): number {
+function coercePositiveInteger(input: string | number | undefined, label: string): number {
   const value = Number(input);
 
   if (!Number.isInteger(value) || value <= 0) {
@@ -182,21 +179,16 @@ export function resolveRuntimeDefaults(persisted: PersistedConfig): DistillSetti
     "localConcurrency",
   );
   const localHost = normalizeLocalHost(persisted.localHost);
-  const localPort = coercePort(
-    persisted.localPort ?? DEFAULT_LOCAL_PORT,
-    "localPort",
-  );
+  const localPort = coercePort(persisted.localPort ?? DEFAULT_LOCAL_PORT, "localPort");
   const model =
     provider === "local"
       ? resolveLocalModel(localBackend)
       : provider === "codex"
-        ? persisted.codexModel ?? persisted.model ?? DEFAULT_CODEX_MODEL
-        : persisted.model ?? DEFAULT_MODEL;
+        ? (persisted.codexModel ?? persisted.model ?? DEFAULT_CODEX_MODEL)
+        : (persisted.model ?? DEFAULT_MODEL);
   const host =
-    provider === "local"
-      ? resolveLocalHost(localHost, localPort)
-      : normalizeHost(persisted.host);
-  const apiKey = provider === "local" ? "" : persisted.apiKey ?? "";
+    provider === "local" ? resolveLocalHost(localHost, localPort) : normalizeHost(persisted.host);
+  const apiKey = provider === "local" ? "" : (persisted.apiKey ?? "");
   const timeoutMs = coerceTimeout(persisted.timeoutMs);
 
   return {
@@ -219,10 +211,7 @@ function runtimeConfig(defaults: DistillSettings, question: string): RuntimeConf
   return { ...defaults, question };
 }
 
-export function parseCommand(
-  argv: string[],
-  persisted: PersistedConfig = {},
-): Command {
+export function parseCommand(argv: string[], persisted: PersistedConfig = {}): Command {
   if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
     return { kind: "help" };
   }
@@ -285,7 +274,7 @@ export function parseCommand(
       continue;
     }
 
-    if (token.startsWith("-")) {
+    if (!token || token.startsWith("-")) {
       throw new UsageError(`Unknown flag: ${token}`);
     }
 

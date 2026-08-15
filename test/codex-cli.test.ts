@@ -45,7 +45,7 @@ describe("codexCliCompletion", () => {
             const instructionArg = processArgs.find((value) => value.startsWith("model_instructions_file="))!;
             const instructionPath = JSON.parse(instructionArg.slice(instructionArg.indexOf("=") + 1));
             instructions = await readFile(instructionPath, "utf8");
-            const outputPath = processArgs[processArgs.indexOf("--output-last-message") + 1];
+            const outputPath = processArgs[processArgs.indexOf("--output-last-message") + 1]!;
             await writeFile(outputPath, "  FINAL ONLY  \n");
             child.stdout.write("ordinary stdout must be ignored");
             child.emit("close", 0);

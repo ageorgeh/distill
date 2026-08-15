@@ -69,8 +69,8 @@ export const PLATFORM_TARGETS: PlatformTarget[] = [
 ];
 
 export function getCurrentPlatformKey(
-  platform = process.platform,
-  arch = process.arch
+  platform: string = process.platform,
+  arch: string = process.arch
 ): string {
   return `${platform}-${arch}`;
 }

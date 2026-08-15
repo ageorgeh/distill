@@ -312,10 +312,10 @@ describe("summarizeBatch", () => {
     expect(body.model).toBe("qwen3.5:2b");
     expect(body.temperature).toBe(0);
     expect(body.max_tokens).toBe(512);
-    expect(body.messages[0].role).toBe("system");
-    expect(body.messages[1].role).toBe("user");
-    expect(body.messages[1].content).toContain("1 passed");
-    expect(body.messages[1].content).toContain(baseConfig.question);
+    expect(body.messages[0]!.role).toBe("system");
+    expect(body.messages[1]!.role).toBe("user");
+    expect(body.messages[1]!.content).toContain("1 passed");
+    expect(body.messages[1]!.content).toContain(baseConfig.question);
   });
 
 });
@@ -339,8 +339,8 @@ describe("summarizeTranslate", () => {
         const body = JSON.parse(String(init?.body ?? "{}")) as {
           messages: Array<{ role: string; content: string }>;
         };
-        systemContent = body.messages[0].content;
-        userContent = body.messages[1].content;
+        systemContent = body.messages[0]!.content;
+        userContent = body.messages[1]!.content;
 
         return new Response(
           JSON.stringify({
@@ -378,7 +378,7 @@ describe("summarizeWatch", () => {
         const body = JSON.parse(String(init?.body ?? "{}")) as {
           messages: Array<{ role: string; content: string }>;
         };
-        userContent = body.messages[1].content;
+        userContent = body.messages[1]!.content;
 
         return new Response(
           JSON.stringify({

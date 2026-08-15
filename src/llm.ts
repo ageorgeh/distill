@@ -8,6 +8,11 @@ import {
   type PromptMessages,
 } from "./prompt";
 
+type FetchImplementation = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
+
 export interface ChatCompletionRequest {
   baseUrl: string;
   apiKey: string;
@@ -16,7 +21,7 @@ export interface ChatCompletionRequest {
   timeoutMs: number;
   maxTokens?: number;
   temperature?: number;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: FetchImplementation;
 }
 
 export interface SummarizeDependencies {
@@ -203,7 +208,7 @@ export async function chatCompletion({
 async function summarize(
   config: RuntimeConfig,
   prompt: PromptMessages,
-  fetchImpl?: typeof fetch,
+  fetchImpl?: FetchImplementation,
   dependencies: SummarizeDependencies = {},
 ): Promise<string> {
   if (config.provider === "codex") {
@@ -239,8 +244,8 @@ async function summarize(
 export function summarizeBatch(
   config: RuntimeConfig,
   input: string,
-  optionsOrFetchImpl: SummarizeOptions | typeof fetch = {},
-  fetchImpl?: typeof fetch,
+  optionsOrFetchImpl: SummarizeOptions | FetchImplementation = {},
+  fetchImpl?: FetchImplementation,
 ): Promise<string> {
   const options =
     typeof optionsOrFetchImpl === "function" ? {} : optionsOrFetchImpl;
@@ -259,7 +264,7 @@ export function summarizeTranslate(
   config: RuntimeConfig,
   text: string,
   language: string,
-  fetchImpl?: typeof fetch,
+  fetchImpl?: FetchImplementation,
   dependencies?: SummarizeDependencies,
 ): Promise<string> {
   return summarize(config, buildTranslatePrompt(text, language), fetchImpl, dependencies);
@@ -269,7 +274,7 @@ export function summarizeWatch(
   config: RuntimeConfig,
   previousCycle: string,
   currentCycle: string,
-  fetchImpl?: typeof fetch,
+  fetchImpl?: FetchImplementation,
   dependencies?: SummarizeDependencies,
 ): Promise<string> {
   return summarize(
