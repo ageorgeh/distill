@@ -32,6 +32,11 @@ export interface CodexCliRequest {
   timeoutMs: number;
   dependencies?: Partial<CodexCliDependencies>;
 }
+export interface CodexCliResult {
+  text: string;
+  durationMs: number;
+  usage?: { inputTokens?: number; cachedInputTokens?: number; outputTokens?: number; reasoningOutputTokens?: number };
+}
 
 export function tomlBasicString(value: string): string {
   return JSON.stringify(value);
@@ -51,7 +56,7 @@ function runProcess(
   timeoutMs: number,
   env: NodeJS.ProcessEnv,
   spawnImpl: typeof spawn,
-): Promise<void> {
+): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let stderr = "";
@@ -63,7 +68,7 @@ function runProcess(
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      error ? reject(error) : resolve();
+      error ? reject(error) : resolve(stdout);
     };
 
     try {
@@ -105,13 +110,30 @@ function runProcess(
   });
 }
 
+function usageFromJsonl(jsonl: string): CodexCliResult["usage"] {
+  for (const line of jsonl.split("\n").reverse()) {
+    try {
+      const event = JSON.parse(line) as { usage?: Record<string, unknown>; item?: { usage?: Record<string, unknown> } };
+      const usage = event.usage ?? event.item?.usage;
+      if (!usage) continue;
+      return {
+        ...(typeof usage.input_tokens === "number" ? { inputTokens: usage.input_tokens } : typeof usage.inputTokens === "number" ? { inputTokens: usage.inputTokens as number } : {}),
+        ...(typeof usage.cached_input_tokens === "number" ? { cachedInputTokens: usage.cached_input_tokens } : typeof usage.cachedInputTokens === "number" ? { cachedInputTokens: usage.cachedInputTokens as number } : {}),
+        ...(typeof usage.output_tokens === "number" ? { outputTokens: usage.output_tokens } : typeof usage.outputTokens === "number" ? { outputTokens: usage.outputTokens as number } : {}),
+        ...(typeof usage.reasoning_output_tokens === "number" ? { reasoningOutputTokens: usage.reasoning_output_tokens } : typeof usage.reasoningOutputTokens === "number" ? { reasoningOutputTokens: usage.reasoningOutputTokens as number } : {}),
+      };
+    } catch { /* JSONL diagnostics are optional telemetry. */ }
+  }
+  return undefined;
+}
+
 export async function codexCliCompletion({
   model,
   executable,
   prompt,
   timeoutMs,
   dependencies = {},
-}: CodexCliRequest): Promise<string> {
+}: CodexCliRequest): Promise<CodexCliResult> {
   const deps: CodexCliDependencies = {
     spawn,
     mkdtemp,
@@ -148,6 +170,7 @@ export async function codexCliCompletion({
       "--sandbox", "read-only",
       "--skip-git-repo-check",
       "--color", "never",
+      "--json",
       "--disable", "shell_tool",
       "-c", 'web_search="disabled"',
       "-c", "project_doc_max_bytes=0",
@@ -157,7 +180,8 @@ export async function codexCliCompletion({
       "-",
     ];
 
-    await runProcess(executable, args, prompt.user, timeoutMs, deps.env, deps.spawn);
+    const startedAt = Date.now();
+    const jsonl = await runProcess(executable, args, prompt.user, timeoutMs, deps.env, deps.spawn);
 
     let answer: string;
     try {
@@ -173,7 +197,7 @@ export async function codexCliCompletion({
       throw new Error("Codex CLI returned an empty final message.");
     }
 
-    return answer;
+    return { text: answer, durationMs: Date.now() - startedAt, ...(usageFromJsonl(jsonl) ? { usage: usageFromJsonl(jsonl) } : {}) };
   } finally {
     await deps.rm(directory, { recursive: true, force: true });
   }

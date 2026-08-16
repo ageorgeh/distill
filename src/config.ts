@@ -5,10 +5,10 @@ export const DEFAULT_CODEX_MODEL = "gpt-5.3-codex-spark";
 export const DEFAULT_CODEX_COMMAND = "codex";
 export const DEFAULT_HOST = "http://127.0.0.1:11434/v1";
 export const DEFAULT_TIMEOUT_MS = 180_000;
-export const DEFAULT_CONTEXT_TIMEOUT_MS = 240_000;
+export const DEFAULT_CONTEXT_TIMEOUT_MS = 300_000;
 export const DEFAULT_SMALL_OUTPUT_BYTES = 2_000;
 export const DEFAULT_PARENT_TOOL_OUTPUT_LIMIT = 2_500;
-export const DEFAULT_CONTEXT_CHILD_TOOL_OUTPUT_LIMIT = 8_000;
+export const DEFAULT_CONTEXT_CHILD_TOOL_OUTPUT_LIMIT = 2_000;
 export const DEFAULT_LOCAL_BACKEND = "auto";
 export const DEFAULT_LOCAL_CONCURRENCY = 5;
 export const DEFAULT_LOCAL_HOST = "127.0.0.1";
@@ -58,7 +58,8 @@ export interface ResolvedConfig {
   telemetry: { directory: string };
 }
 
-export interface ContextRequest {
+export interface ContextGatherRequest {
+  action: "gather";
   workspaceRoot: string;
   intent: ContextIntent;
   objective: string;
@@ -66,6 +67,14 @@ export interface ContextRequest {
   inlineEvidence?: string;
   baseRef?: string;
 }
+
+export interface ContextPacketRequest {
+  action: "packet";
+  contextId: string;
+  packetId: string;
+}
+
+export type ContextRequest = ContextGatherRequest | ContextPacketRequest;
 
 export interface RunRequest {
   workspaceRoot: string;
@@ -142,7 +151,7 @@ export function resolveConfig(config: DistillConfig = {}): ResolvedConfig {
     provider: "codex",
     model: text(rawContext.model, DEFAULT_CODEX_MODEL, "context.model"),
     codexCommand: text(rawContext.codexCommand, DEFAULT_CODEX_COMMAND, "context.codexCommand"),
-    reasoningEffort: text(rawContext.reasoningEffort, "medium", "context.reasoningEffort"),
+    reasoningEffort: text(rawContext.reasoningEffort, "low", "context.reasoningEffort"),
     timeoutMs: positive(rawContext.timeoutMs, DEFAULT_CONTEXT_TIMEOUT_MS, "context.timeoutMs"),
     childToolOutputTokenLimit: positive(rawContext.childToolOutputTokenLimit, DEFAULT_CONTEXT_CHILD_TOOL_OUTPUT_LIMIT, "context.childToolOutputTokenLimit"),
   };
@@ -161,9 +170,16 @@ export function parseCommand(argv: string[], cwd = process.cwd()): Command {
     return { kind: "run", request: { workspaceRoot: cwd, question: argv.slice(1, divider).join(" ").trim() || undefined, command } };
   }
   if (argv[0] === "context") {
+    const action = argv[1];
+    if (action === "packet") {
+      const [contextId, packetId] = argv.slice(2);
+      if (!contextId || !packetId || argv.length !== 4) throw new UsageError("Usage: distill context packet <context-id> <packet-id>");
+      return { kind: "context", request: { action: "packet", contextId, packetId } };
+    }
+    if (action !== "gather") throw new UsageError("Usage: distill context gather --intent implement --reference task-083 \"Gather repository context.\"");
     let intent: ContextIntent = "implement"; let baseRef: string | undefined; let inlineEvidenceFile: string | undefined;
     const references: string[] = []; const objective: string[] = [];
-    for (let index = 1; index < argv.length; index += 1) {
+    for (let index = 2; index < argv.length; index += 1) {
       const token = argv[index];
       if (token === "--intent") { const value = argv[++index]; if (!value || !["implement", "advise", "review", "merge"].includes(value)) throw new UsageError("--intent must be implement, advise, review, or merge."); intent = value as ContextIntent; continue; }
       if (token === "--reference") { const value = argv[++index]; if (!value) throw new UsageError("--reference requires a value."); references.push(value); continue; }
@@ -174,11 +190,11 @@ export function parseCommand(argv: string[], cwd = process.cwd()): Command {
     }
     const joined = objective.join(" ").trim();
     if (!joined) throw new UsageError("A retrieval objective is required.");
-    return { kind: "context", request: { workspaceRoot: cwd, intent, objective: joined, ...(references.length ? { references } : {}), ...(baseRef ? { baseRef } : {}) }, ...(inlineEvidenceFile ? { inlineEvidenceFile } : {}) };
+    return { kind: "context", request: { action: "gather", workspaceRoot: cwd, intent, objective: joined, ...(references.length ? { references } : {}), ...(baseRef ? { baseRef } : {}) }, ...(inlineEvidenceFile ? { inlineEvidenceFile } : {}) };
   }
-  throw new UsageError("Usage: distill mcp | distill context ... | distill run <question> -- <command>");
+  throw new UsageError("Usage: distill mcp | distill context gather ... | distill context packet ... | distill run <question> -- <command>");
 }
 
 export function formatUsage(): string {
-  return ["Usage:", "  distill mcp", "  distill context --intent implement --reference task-083 \"Prepare repository context.\"", "  distill run \"Report failures with paths and line numbers\" -- pnpm lint", "", "Configuration: distill.config.ts"].join("\n");
+  return ["Usage:", "  distill mcp", "  distill context gather --intent implement --reference task-083 \"Gather repository context.\"", "  distill context packet <context-id> <packet-id>", "  distill run \"Report failures with paths and line numbers\" -- pnpm lint", "", "Configuration: distill.config.ts"].join("\n");
 }

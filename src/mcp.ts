@@ -5,15 +5,18 @@ import type { ContextRequest, ResolvedConfig, RunRequest } from "./config";
 import { createContextHandler } from "./context";
 import { createRunHandler } from "./run-command";
 
-export const CONTEXT_DESCRIPTION = "Use before moderate, broad, architectural, cross-module, review, merge, or unclear repository work. Convert the user request into a retrieval-only objective. Pass repository-backed requirements by task ID, path, symbol, branch, or other reference rather than copying them. Include inlineEvidence only for source text unavailable in the repository. Do not pass reporting instructions, requested response formatting, reviewer orchestration, or other work the parent agent remains responsible for. Skip this tool for narrow tasks that already identify the exact file and local behaviour unless callers, tests, or architectural impact are unclear.";
-export const RUN_DESCRIPTION = "Use to execute builds, tests, linting, type checks, searches, logs, diffs, and other commands whose output may be large, noisy, or empty. Distill always returns the command exit status and enough information to avoid rerunning a silent or already-understandable command.";
+export const CONTEXT_DESCRIPTION = "Use after the capable agent has read and understood the authoritative task, specification, review finding, or merge request, but before broad repository discovery. In gather mode provide a complete repository-context objective and task IDs, symbols, paths, branches, or issue references. Distill gathers implementation owners, callers, tests, documentation, completed searches, repository findings, and exact excerpts; it does not replace task understanding, source review, or correctness reasoning. The first result is a packet index from one completed Spark pass. Retrieve listed packets with packet mode before exploring or editing their concern; packet retrieval never reruns Spark. Skip for narrow work that already has sufficient local context.";
+export const RUN_DESCRIPTION = "Execute builds, tests, lint, type checks, formatting, logs, mechanical searches, and validation whose output may be large, noisy, or empty. Distill returns deterministic exit status, direct small output, or a bounded root-cause summary. It does not review correctness or replace exact source reading.";
 
-const contextSchema = { type: "object", additionalProperties: false, required: ["workspaceRoot", "intent", "objective"], properties: { workspaceRoot: { type: "string" }, intent: { type: "string", enum: ["implement", "advise", "review", "merge"] }, objective: { type: "string" }, references: { type: "array", items: { type: "string" } }, inlineEvidence: { type: "string" }, baseRef: { type: "string" } } };
+const contextSchema = { oneOf: [
+  { type: "object", additionalProperties: false, required: ["action", "workspaceRoot", "intent", "objective"], properties: { action: { const: "gather" }, workspaceRoot: { type: "string" }, intent: { type: "string", enum: ["implement", "advise", "review", "merge"] }, objective: { type: "string" }, references: { type: "array", items: { type: "string" } }, inlineEvidence: { type: "string" }, baseRef: { type: "string" } } },
+  { type: "object", additionalProperties: false, required: ["action", "contextId", "packetId"], properties: { action: { const: "packet" }, contextId: { type: "string" }, packetId: { type: "string" } } },
+] };
 const runSchema = { type: "object", additionalProperties: false, required: ["workspaceRoot", "command"], properties: { workspaceRoot: { type: "string" }, command: { type: "string" }, question: { type: "string" } } };
 
 function isContextRequest(value: unknown): value is ContextRequest {
-  const request = value as Partial<ContextRequest> | undefined;
-  return Boolean(request && typeof request.workspaceRoot === "string" && typeof request.objective === "string" && ["implement", "advise", "review", "merge"].includes(request.intent ?? ""));
+  const request = value as Record<string, unknown> | undefined;
+  return Boolean(request && ((request.action === "gather" && typeof request.workspaceRoot === "string" && typeof request.objective === "string" && ["implement", "advise", "review", "merge"].includes(String(request.intent))) || (request.action === "packet" && typeof request.contextId === "string" && typeof request.packetId === "string")));
 }
 function isRunRequest(value: unknown): value is RunRequest {
   const request = value as Partial<RunRequest> | undefined;

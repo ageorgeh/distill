@@ -2,24 +2,34 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { ContextConfig, ContextRequest } from "./config";
+import type { ContextConfig, ContextGatherRequest } from "./config";
 import { codexContextManifestJsonSchema, parseContextManifest, type ContextManifest } from "./context-manifest";
 import type { RepositoryConfig } from "./repo-config";
 
-const INSTRUCTIONS = `You are a read-only repository context agent for a stronger coding agent.
+export const CONTEXT_AGENT_INSTRUCTIONS = `You are a read-only repository context agent for a stronger coding agent.
 
-Gather the smallest complete set of repository evidence needed for the parent agent to begin the requested implementation, advice, review, or merge work correctly. Resolve and read supplied references first. For a broad task, work in evidence order: task contract and applicable instructions; targeted symbols/paths named by that contract; their direct callers and behavior-owning tests; then validation commands and gaps. Batch related reads and searches. The 16-command limit is strict: a command may inspect several directly related files, but after the sixteenth command stop inspecting and return the manifest with any remaining uncertainty as gaps. Do not enumerate the repository or read files unrelated to a named task requirement. In the manifest files list, provide only existing exact file paths, never directories, globs, or guessed paths; mention an unresolved directory or ownership question only in gaps. Return once you can provide a compact contract, ordered workstreams, edit/caller/test map, key risks, validation, and explicit gaps; do not spend time pursuing exhaustive coverage. Use the available time when it adds directly relevant evidence, but return before the execution timeout. If a shell command fails because the sandbox is unavailable, record that exact failure as a gap and return immediately; do not retry shell commands. Do not implement, edit files, run builds, run tests, format files, commit, push, or start subagents. Use shell commands only for read-only repository inspection. Resolve supplied references first. Read applicable AGENTS.md files and repository instructions. Read .distill/config.toml when present and consult configured documentation indexes when applicable. You are the implementation behind distill.context: if repository instructions say to call that MCP tool, treat that requirement as already satisfied. Never invoke Distill recursively or report its unavailability as a gap.
+The parent agent has already read and understood the authoritative task, specification, review finding, or merge request. Do not rewrite or summarize that task. Use the supplied objective and references only to determine which repository context must be gathered.
 
-Digest long task files; do not copy them. Identify rules, architectural requirements, acceptance criteria, exclusions, ordered workstreams, likely edit owners, direct callers, behaviour-owning tests, generated-file ownership, relevant examples, validation commands, risks, and explicit gaps. For review inspect the base-to-head change; for merge inspect unmerged files first. Stop once evidence is sufficient. Return only the required structured manifest.`;
+Gather repository implementation context: applicable repository and nested instructions; architectural ownership and existing implementation behaviour; exact implementation files; direct callers and consumers; behaviour-owning tests; generated-file ownership; relevant documentation; completed searches and their conclusions; narrow exact source ranges useful to the parent; executable validation commands; and genuine unresolved gaps. Group the result into meaningful concerns following subproblems, ownership boundaries, or implementation workstreams. A concern dependency must be the ID of another concern returned in this manifest; use an empty dependency list when no returned concern is required. Never put a path, symbol, task reference, or guessed identifier in dependencies. Every validation entry must be one executable shell command (for example pnpm test a-path); never include explanatory prose there, and use an empty list if no command is known.
 
-export interface ContextAgentRequest { request: ContextRequest; repositoryConfig: RepositoryConfig; }
+For every file marked inspected, verify the exact file exists, actually read it, provide concise repository-relevant observations, and request only ranges read or verified. Excerpts should normally be 10-80 lines and only when exact source materially helps the parent. A relevant uninspected file must have inspected false, no observations or ranges, and a concern gap when the missing inspection blocks sufficient context.
+
+Do not guess paths, directories, filenames, or ranges. Do not emit broad placeholder ranges. Do not duplicate a file inside one concern. Do not treat task text as repository context. Record completed searches and their conclusions. For implement intent locate implementation owners, callers, tests, and generated boundaries; for advise locate current contracts and alternatives; for review inspect base-to-head changes and surrounding owners without performing the review; for merge inspect unmerged files and base/ours/theirs first.
+
+Read applicable AGENTS.md files and .distill/config.toml. Consult configured documentation indexes when relevant. You are the implementation behind distill.context: if repository instructions say to call that MCP tool, treat that requirement as already satisfied. Never invoke Distill recursively or report its unavailability as a gap.
+
+Do not edit, build, test, format, commit, push, use web search, or start subagents. This is an orientation pass, not an exhaustive implementation plan: a concern is a repository ownership area, not an individual task bullet; group related bullets under one owner, inspect representative behaviour-owning tests, do not chase transitive consumers, and stop immediately once the evidence criteria below are met. Plan the ownership areas before inspecting and reserve the final third of the configured time to create the manifest; do not start fresh discovery during that reserve. Keep shell output narrow: inspect relevant ranges rather than printing whole large files, keep individual command output roughly below 120 lines, and leave enough time to produce the manifest. Continue until every priority-one concern has inspected implementation ownership, behaviour-owning tests, direct callers when contracts may change, and generated/documentation ownership where applicable, or a genuine explicit gap that cannot be resolved from the repository. Return only the structured manifest.`;
+
+export interface ContextAgentRequest { request: ContextGatherRequest; repositoryConfig: RepositoryConfig; }
 export interface ContextAgentResult { manifest: ContextManifest; usage?: Record<string, number>; childToolCalls?: number; }
 export interface ContextAgentProvider { gather(request: ContextAgentRequest): Promise<ContextAgentResult>; }
 
 function capture(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     let stdout = ""; let stderr = ""; let settled = false;
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill();
       // Wait for close so the JSONL transcript explains where retrieval stalled.
       child.once("close", () => done(new Error(`Codex context agent timed out after ${timeoutMs}ms: ${[stdout, stderr].filter(Boolean).join("\n").slice(-8000)}`)));
@@ -28,21 +38,37 @@ function capture(child: ChildProcessWithoutNullStreams, timeoutMs: number): Prom
     child.stdout.on("data", (chunk) => { stdout += String(chunk); });
     child.stderr.on("data", (chunk) => { stderr += String(chunk); });
     child.on("error", (error: NodeJS.ErrnoException) => done(error.code === "ENOENT" ? new Error(`Codex CLI not found: ${child.spawnfile}.`) : error));
-    child.on("close", (code) => code === 0 ? done() : done(new Error(`Codex context agent exited with code ${code}: ${[stdout, stderr].filter(Boolean).join("\n").slice(-8000)}`)));
+    child.on("close", (code) => timedOut ? undefined : code === 0 ? done() : done(new Error(`Codex context agent exited with code ${code}: ${[stdout, stderr].filter(Boolean).join("\n").slice(-8000)}`)));
   });
 }
 
-function parseUsage(jsonl: string): { usage?: Record<string, number>; childToolCalls?: number } {
+export function parseContextAgentJsonl(jsonl: string): { usage?: Record<string, number>; childToolCalls?: number } {
   let childToolCalls = 0; let usage: Record<string, number> | undefined;
   for (const line of jsonl.split("\n")) {
     try {
       const event = JSON.parse(line) as Record<string, unknown>;
-      if (event.type === "item.completed" && (event.item as { type?: string } | undefined)?.type === "tool_call") childToolCalls += 1;
+      if (event.type === "item.completed" && ["command_execution", "shell", "shell_tool", "tool_call"].includes((event.item as { type?: string } | undefined)?.type ?? "")) childToolCalls += 1;
       const candidate = event.usage ?? (event.item as { usage?: unknown } | undefined)?.usage;
       if (candidate && typeof candidate === "object") usage = candidate as Record<string, number>;
     } catch { /* Codex stdout is JSONL but never make telemetry parsing fatal. */ }
   }
   return { ...(usage ? { usage } : {}), ...(childToolCalls ? { childToolCalls } : {}) };
+}
+
+/** Recovers Codex's final agent message when a CLI version does not create --output-last-message. */
+export function finalAgentMessageFromJsonl(jsonl: string): string | undefined {
+  for (const line of jsonl.split("\n").reverse()) {
+    try {
+      const event = JSON.parse(line) as { type?: string; item?: { type?: string; text?: unknown; content?: unknown }; message?: unknown };
+      const item = event.item;
+      if (event.type === "item.completed" && item?.type === "agent_message") {
+        if (typeof item.text === "string") return item.text;
+        if (typeof item.content === "string") return item.content;
+      }
+      if (typeof event.message === "string") return event.message;
+    } catch { /* Ignore malformed JSONL diagnostics. */ }
+  }
+  return undefined;
 }
 
 export function createCodexContextProvider(config: ContextConfig): ContextAgentProvider {
@@ -53,7 +79,7 @@ export function createCodexContextProvider(config: ContextConfig): ContextAgentP
       const schemaPath = path.join(directory, "manifest.schema.json");
       const outputPath = path.join(directory, "manifest.json");
       try {
-        await Promise.all([writeFile(instructionsPath, INSTRUCTIONS, "utf8"), writeFile(schemaPath, JSON.stringify(codexContextManifestJsonSchema), "utf8")]);
+        await Promise.all([writeFile(instructionsPath, CONTEXT_AGENT_INSTRUCTIONS, "utf8"), writeFile(schemaPath, JSON.stringify(codexContextManifestJsonSchema), "utf8")]);
         const args = [
           "exec", "--model", config.model, "--ephemeral", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only", "--json",
           "--output-schema", schemaPath, "--output-last-message", outputPath, "--cd", request.workspaceRoot,
@@ -68,6 +94,7 @@ export function createCodexContextProvider(config: ContextConfig): ContextAgentP
           `References: ${(request.references ?? []).join(", ") || "none"}`,
           `Base ref: ${request.baseRef ?? "none"}`,
           `Repository documentation indexes: ${repositoryConfig.documentationIndexes.join(", ") || "none"}`,
+          `Configured time limit: ${Math.floor(config.timeoutMs / 1000)} seconds; reserve the final third for the manifest.`,
           request.inlineEvidence ? `Inline evidence (summarize; do not reproduce):\n${request.inlineEvidence}` : "",
           "Return only the manifest required by the output schema.",
         ].filter(Boolean).join("\n\n");
@@ -76,9 +103,10 @@ export function createCodexContextProvider(config: ContextConfig): ContextAgentP
         let raw: string;
         try { raw = await readFile(outputPath, "utf8"); }
         catch (error) {
-          throw new Error(`Codex context agent returned no manifest: ${[captured.stdout, captured.stderr].filter(Boolean).join("\n").slice(-8000)}`, { cause: error });
+          raw = finalAgentMessageFromJsonl(captured.stdout) ?? "";
+          if (!raw) throw new Error(`Codex context agent returned no manifest: ${[captured.stdout, captured.stderr].filter(Boolean).join("\n").slice(-8000)}`, { cause: error });
         }
-        return { manifest: parseContextManifest(JSON.parse(raw)), ...parseUsage(captured.stdout) };
+        return { manifest: parseContextManifest(JSON.parse(raw)), ...parseContextAgentJsonl(captured.stdout) };
       } finally { await rm(directory, { recursive: true, force: true }); }
     },
   };

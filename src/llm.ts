@@ -11,9 +11,15 @@ export interface OutputSummaryRequest {
   exitCode: number | null;
   stdout: string;
   stderr: string;
+  maxOutputBytes: number;
 }
 
-export interface OutputProvider { summarize(request: OutputSummaryRequest): Promise<string>; }
+export interface OutputProviderResult {
+  text: string;
+  durationMs: number;
+  usage?: { inputTokens?: number; cachedInputTokens?: number; outputTokens?: number; reasoningOutputTokens?: number };
+}
+export interface OutputProvider { summarize(request: OutputSummaryRequest): Promise<OutputProviderResult>; }
 
 export interface ChatCompletionRequest {
   baseUrl: string; apiKey: string; model: string; prompt: string | PromptMessages;
@@ -26,7 +32,8 @@ function chatUrl(baseUrl: string): URL {
   return url;
 }
 
-export async function chatCompletion(request: ChatCompletionRequest): Promise<string> {
+export async function chatCompletion(request: ChatCompletionRequest): Promise<OutputProviderResult> {
+  const startedAt = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), request.timeoutMs);
   try {
@@ -38,10 +45,10 @@ export async function chatCompletion(request: ChatCompletionRequest): Promise<st
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`Request failed with ${response.status}.`);
-    const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_tokens?: number; cached_tokens?: number; completion_tokens?: number; reasoning_tokens?: number } };
     const result = payload.choices?.[0]?.message?.content?.trim();
     if (!result) throw new Error("Provider returned an empty response.");
-    return result;
+    return { text: result, durationMs: Date.now() - startedAt, ...(payload.usage ? { usage: { ...(payload.usage.prompt_tokens !== undefined ? { inputTokens: payload.usage.prompt_tokens } : {}), ...(payload.usage.cached_tokens !== undefined ? { cachedInputTokens: payload.usage.cached_tokens } : {}), ...(payload.usage.completion_tokens !== undefined ? { outputTokens: payload.usage.completion_tokens } : {}), ...(payload.usage.reasoning_tokens !== undefined ? { reasoningOutputTokens: payload.usage.reasoning_tokens } : {}) } } : {}) };
   } finally { clearTimeout(timer); }
 }
 

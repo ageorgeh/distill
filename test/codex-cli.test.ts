@@ -55,14 +55,15 @@ describe("codexCliCompletion", () => {
       }
     });
 
-    expect(output).toBe("FINAL ONLY");
+    expect(output.text).toBe("FINAL ONLY");
+    expect(output.durationMs).toBeGreaterThanOrEqual(0);
     expect(executable).toBe("custom codex");
     expect(stdin).toBe(prompt.user);
     expect(args).toContain("selected-spark");
     expect(args).toEqual(expect.arrayContaining([
       "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules",
       'approval_policy="never"', "--sandbox", "read-only",
-      "--disable", "shell_tool", 'web_search="disabled"', "project_doc_max_bytes=0", "-"
+      "--disable", "shell_tool", "--json", 'web_search="disabled"', "project_doc_max_bytes=0", "-"
     ]));
     expect(instructions.endsWith(prompt.system)).toBe(true);
     expect(instructions).toContain("Do not use shell, web, plugins, skills, MCP, subagents, or other tools.");

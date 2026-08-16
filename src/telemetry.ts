@@ -14,7 +14,8 @@ export function telemetryId(): string { return randomUUID(); }
 
 export async function writeTelemetry(directory: string, id: string, value: unknown): Promise<void> {
   try {
-    await mkdir(directory, { recursive: true });
-    await writeFile(path.join(directory, `${new Date().toISOString().replace(/[:.]/g, "-")}-${id}.json`), JSON.stringify(value, null, 2), "utf8");
+    const invocations = path.join(directory, "invocations");
+    await mkdir(invocations, { recursive: true });
+    await writeFile(path.join(invocations, `${new Date().toISOString().replace(/[:.]/g, "-")}-${id}.json`), JSON.stringify(value, null, 2), "utf8");
   } catch { /* Telemetry must never alter the primary result. */ }
 }

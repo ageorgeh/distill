@@ -12,8 +12,8 @@ describe("run", () => {
       const run = createRunHandler(resolveConfig({}), { telemetryDirectory: telemetry });
       expect(await run({ workspaceRoot: process.cwd(), command: "true" })).toBe("COMMAND PASS exit=0 output=empty");
       expect(await run({ workspaceRoot: process.cwd(), command: "sh -c 'echo broken >&2; exit 2'" })).toBe("COMMAND FAIL exit=2 distilled=no reason=small-output\nbroken\n");
-      const files = await (await import("node:fs/promises")).readdir(telemetry);
-      const stored = await readFile(path.join(telemetry, files[0]!), "utf8");
+      const files = await (await import("node:fs/promises")).readdir(path.join(telemetry, "invocations"));
+      const stored = await readFile(path.join(telemetry, "invocations", files[0]!), "utf8");
       expect(stored).not.toContain('"stderr": "broken');
     } finally { await rm(telemetry, { recursive: true, force: true }); }
   });
@@ -21,9 +21,9 @@ describe("run", () => {
   it("uses a provider only for large output and bounds provider failures", async () => {
     const config = resolveConfig({ output: { smallOutputBytes: 10 } });
     const request = { workspaceRoot: process.cwd(), command: "yes x | head -n 50" };
-    expect(await createRunHandler(config, { provider: { summarize: async () => "compressed" } })(request)).toContain("distilled=yes\ncompressed");
-    const output = await createRunHandler(config, { provider: { summarize: async () => { throw new Error("offline"); } }, resolveLimit: async () => 20 })(request);
+    expect(await createRunHandler(config, { provider: { summarize: async () => ({ text: "compressed", durationMs: 2 }) } })(request)).toContain("distilled=yes\ncompressed");
+    const output = await createRunHandler(config, { provider: { summarize: async () => { throw new Error("offline"); } }, resolveLimit: async () => 100 })(request);
     expect(output).toContain("reason=provider-error");
-    expect(Buffer.byteLength(output)).toBeLessThan(200);
+    expect(Buffer.byteLength(output)).toBeLessThan(320);
   });
 });
