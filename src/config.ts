@@ -1,308 +1,184 @@
 import cliPackage from "../packages/cli/package.json";
 
 export const DISTILL_VERSION = cliPackage.version;
-
-export const DEFAULT_MODEL = "qwen3.5:4b";
 export const DEFAULT_CODEX_MODEL = "gpt-5.3-codex-spark";
 export const DEFAULT_CODEX_COMMAND = "codex";
 export const DEFAULT_HOST = "http://127.0.0.1:11434/v1";
-export const DEFAULT_TIMEOUT_MS = 90_000;
-export const DEFAULT_PROVIDER = "local";
+export const DEFAULT_TIMEOUT_MS = 180_000;
+export const DEFAULT_CONTEXT_TIMEOUT_MS = 240_000;
+export const DEFAULT_SMALL_OUTPUT_BYTES = 2_000;
+export const DEFAULT_PARENT_TOOL_OUTPUT_LIMIT = 2_500;
+export const DEFAULT_CONTEXT_CHILD_TOOL_OUTPUT_LIMIT = 8_000;
 export const DEFAULT_LOCAL_BACKEND = "auto";
 export const DEFAULT_LOCAL_CONCURRENCY = 5;
 export const DEFAULT_LOCAL_HOST = "127.0.0.1";
 export const DEFAULT_LOCAL_PORT = 8009;
 export const DISTILL_MLX_MODEL = "samuelfaj/distill-1.7B-4bit-MLX";
 export const DISTILL_LLAMA_MODEL = "distill-local";
-export const DEFAULT_IDLE_MS = 1_200;
-export const DEFAULT_INTERACTIVE_GAP_MS = 180;
-export const DEFAULT_PROGRESS_FRAME_MS = 120;
 
 export type Provider = "local" | "ollama" | "external" | "codex";
 export type LocalBackend = "auto" | "mlx" | "llamacpp";
+export type ContextIntent = "implement" | "advise" | "review" | "merge";
 
-export interface DistillSettings {
+export interface OutputConfig {
   provider: Provider;
+  model: string;
+  codexCommand: string;
+  timeoutMs: number;
+  smallOutputBytes: number;
+  host: string;
+  apiKey: string;
   localBackend: LocalBackend;
   localConcurrency: number;
   localHost: string;
   localPort: number;
+}
+
+/** Useful compatibility name for the local-server module. */
+export type RuntimeConfig = OutputConfig;
+
+export interface ContextConfig {
+  provider: "codex";
   model: string;
-  host: string;
-  apiKey: string;
-  codexCommand?: string;
+  codexCommand: string;
+  reasoningEffort: string;
   timeoutMs: number;
+  childToolOutputTokenLimit: number;
 }
 
-export interface RuntimeConfig extends DistillSettings {
-  question: string;
-  debug?: boolean;
+export interface DistillConfig {
+  output?: Partial<OutputConfig>;
+  context?: Partial<ContextConfig>;
+  telemetry?: { directory?: string };
 }
 
-export type PersistedConfig = Partial<DistillSettings> & {
-  codexModel?: string;
-};
+export interface ResolvedConfig {
+  output: OutputConfig;
+  context: ContextConfig;
+  telemetry: { directory: string };
+}
+
+export interface ContextRequest {
+  workspaceRoot: string;
+  intent: ContextIntent;
+  objective: string;
+  references?: string[];
+  inlineEvidence?: string;
+  baseRef?: string;
+}
+
+export interface RunRequest {
+  workspaceRoot: string;
+  command: string;
+  question?: string;
+}
 
 export type Command =
   | { kind: "help" }
   | { kind: "version" }
-  | { kind: "translate"; text: string; language: string; config: RuntimeConfig }
-  | { kind: "run"; config: RuntimeConfig };
+  | { kind: "mcp" }
+  | { kind: "run"; request: RunRequest }
+  | { kind: "context"; request: ContextRequest; inlineEvidenceFile?: string };
 
 export class UsageError extends Error {
   readonly exitCode = 2;
-
-  constructor(message: string) {
-    super(message);
-    this.name = "UsageError";
-  }
+  constructor(message: string) { super(message); this.name = "UsageError"; }
 }
 
-function coerceTimeout(input: string | number | undefined): number {
-  const value = Number(input ?? DEFAULT_TIMEOUT_MS);
-
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new UsageError("timeoutMs must be a positive number.");
-  }
-
-  return Math.floor(value);
+function positive(value: unknown, fallback: number, label: string): number {
+  if (value === undefined) return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) throw new UsageError(`${label} must be a positive number.`);
+  return Math.floor(number);
 }
 
-function normalizeHost(input: string | undefined): string {
-  const value = (input ?? DEFAULT_HOST).trim();
-
-  if (!value) {
-    throw new UsageError("host cannot be empty.");
-  }
-
-  return value.endsWith("/") ? value.slice(0, -1) : value;
+function provider(value: unknown, fallback: Provider): Provider {
+  if (value === undefined) return fallback;
+  if (value === "local" || value === "ollama" || value === "external" || value === "codex") return value;
+  throw new UsageError("output.provider must be local, ollama, external, or codex.");
 }
 
-function normalizeLocalHost(input: string | undefined): string {
-  const value = (input ?? DEFAULT_LOCAL_HOST).trim();
-
-  if (!value) {
-    throw new UsageError("localHost cannot be empty.");
-  }
-
-  return value;
+function backend(value: unknown): LocalBackend {
+  if (value === undefined) return DEFAULT_LOCAL_BACKEND;
+  if (value === "auto" || value === "mlx" || value === "llamacpp") return value;
+  throw new UsageError("output.localBackend must be auto, mlx, or llamacpp.");
 }
 
-function coercePositiveInteger(input: string | number | undefined, label: string): number {
-  const value = Number(input);
-
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new UsageError(`${label} must be a positive integer.`);
-  }
-
-  return value;
+function text(value: unknown, fallback: string, label: string): string {
+  if (value === undefined) return fallback;
+  if (typeof value !== "string" || !value.trim()) throw new UsageError(`${label} must be a non-empty string.`);
+  return value.trim();
 }
 
-function coercePort(input: string | number | undefined, label: string): number {
-  const value = coercePositiveInteger(input, label);
-
-  if (value > 65_535) {
-    throw new UsageError(`${label} must be between 1 and 65535.`);
-  }
-
-  return value;
+function localModel(selected: LocalBackend): string {
+  const resolved = selected === "auto" ? (process.platform === "darwin" && process.arch === "arm64" ? "mlx" : "llamacpp") : selected;
+  return resolved === "mlx" ? DISTILL_MLX_MODEL : DISTILL_LLAMA_MODEL;
 }
 
-function coerceProvider(input: string | undefined): Provider {
-  const value = (input ?? DEFAULT_PROVIDER).trim().toLowerCase();
-
-  if (value === "local" || value === "ollama" || value === "external" || value === "codex") {
-    return value;
-  }
-
-  throw new UsageError("provider must be local, ollama, external, or codex.");
-}
-
-function coercePersistedProvider(input: string | undefined): Provider {
-  try {
-    return coerceProvider(input);
-  } catch {
-    return DEFAULT_PROVIDER;
-  }
-}
-
-function coerceLocalBackend(input: string | undefined): LocalBackend {
-  const value = (input ?? DEFAULT_LOCAL_BACKEND).trim().toLowerCase();
-
-  if (value === "auto" || value === "mlx" || value === "llamacpp") {
-    return value;
-  }
-
-  throw new UsageError("localBackend must be auto, mlx, or llamacpp.");
-}
-
-function coercePersistedLocalBackend(input: string | undefined): LocalBackend {
-  try {
-    return coerceLocalBackend(input);
-  } catch {
-    return DEFAULT_LOCAL_BACKEND;
-  }
-}
-
-function localBackendForPlatform(
-  backend: LocalBackend,
-  platform = process.platform,
-  arch = process.arch,
-): Exclude<LocalBackend, "auto"> {
-  if (backend !== "auto") {
-    return backend;
-  }
-
-  return platform === "darwin" && arch === "arm64" ? "mlx" : "llamacpp";
-}
-
-function resolveLocalModel(
-  backend: LocalBackend,
-  platform = process.platform,
-  arch = process.arch,
-): string {
-  return localBackendForPlatform(backend, platform, arch) === "mlx"
-    ? DISTILL_MLX_MODEL
-    : DISTILL_LLAMA_MODEL;
-}
-
-function resolveLocalHost(localHost: string, localPort: number): string {
-  return `http://${localHost}:${localPort}/v1`;
-}
-
-/** Resolve the one supported configuration source: distill.config.ts. */
-export function resolveRuntimeDefaults(persisted: PersistedConfig): DistillSettings {
-  const provider = coercePersistedProvider(persisted.provider);
-  const localBackend = coercePersistedLocalBackend(persisted.localBackend);
-  const localConcurrency = coercePositiveInteger(
-    persisted.localConcurrency ?? DEFAULT_LOCAL_CONCURRENCY,
-    "localConcurrency",
-  );
-  const localHost = normalizeLocalHost(persisted.localHost);
-  const localPort = coercePort(persisted.localPort ?? DEFAULT_LOCAL_PORT, "localPort");
-  const model =
-    provider === "local"
-      ? resolveLocalModel(localBackend)
-      : provider === "codex"
-        ? (persisted.codexModel ?? persisted.model ?? DEFAULT_CODEX_MODEL)
-        : (persisted.model ?? DEFAULT_MODEL);
-  const host =
-    provider === "local" ? resolveLocalHost(localHost, localPort) : normalizeHost(persisted.host);
-  const apiKey = provider === "local" ? "" : (persisted.apiKey ?? "");
-  const timeoutMs = coerceTimeout(persisted.timeoutMs);
-
-  return {
-    provider,
+export function resolveConfig(config: DistillConfig = {}): ResolvedConfig {
+  const rawOutput = config.output ?? {};
+  const outputProvider = provider(rawOutput.provider, "codex");
+  const localBackend = backend(rawOutput.localBackend);
+  const localHost = text(rawOutput.localHost, DEFAULT_LOCAL_HOST, "output.localHost");
+  const localPort = positive(rawOutput.localPort, DEFAULT_LOCAL_PORT, "output.localPort");
+  if (localPort > 65_535) throw new UsageError("output.localPort must be between 1 and 65535.");
+  const host = text(rawOutput.host, DEFAULT_HOST, "output.host").replace(/\/$/, "");
+  const output: OutputConfig = {
+    provider: outputProvider,
+    model: text(rawOutput.model, outputProvider === "local" ? localModel(localBackend) : DEFAULT_CODEX_MODEL, "output.model"),
+    codexCommand: text(rawOutput.codexCommand, DEFAULT_CODEX_COMMAND, "output.codexCommand"),
+    timeoutMs: positive(rawOutput.timeoutMs, DEFAULT_TIMEOUT_MS, "output.timeoutMs"),
+    smallOutputBytes: positive(rawOutput.smallOutputBytes, DEFAULT_SMALL_OUTPUT_BYTES, "output.smallOutputBytes"),
+    host: outputProvider === "local" ? `http://${localHost}:${localPort}/v1` : host,
+    apiKey: typeof rawOutput.apiKey === "string" ? rawOutput.apiKey : "",
     localBackend,
-    localConcurrency,
+    localConcurrency: positive(rawOutput.localConcurrency, DEFAULT_LOCAL_CONCURRENCY, "output.localConcurrency"),
     localHost,
     localPort,
-    model,
-    host,
-    apiKey,
-    ...(provider === "codex"
-      ? { codexCommand: persisted.codexCommand ?? DEFAULT_CODEX_COMMAND }
-      : {}),
-    timeoutMs,
   };
+  const rawContext = config.context ?? {};
+  if (rawContext.provider !== undefined && rawContext.provider !== "codex") throw new UsageError("context.provider must be codex.");
+  const context: ContextConfig = {
+    provider: "codex",
+    model: text(rawContext.model, DEFAULT_CODEX_MODEL, "context.model"),
+    codexCommand: text(rawContext.codexCommand, DEFAULT_CODEX_COMMAND, "context.codexCommand"),
+    reasoningEffort: text(rawContext.reasoningEffort, "medium", "context.reasoningEffort"),
+    timeoutMs: positive(rawContext.timeoutMs, DEFAULT_CONTEXT_TIMEOUT_MS, "context.timeoutMs"),
+    childToolOutputTokenLimit: positive(rawContext.childToolOutputTokenLimit, DEFAULT_CONTEXT_CHILD_TOOL_OUTPUT_LIMIT, "context.childToolOutputTokenLimit"),
+  };
+  return { output, context, telemetry: { directory: text(config.telemetry?.directory, ".telemetry", "telemetry.directory") } };
 }
 
-function runtimeConfig(defaults: DistillSettings, question: string): RuntimeConfig {
-  return { ...defaults, question };
-}
-
-export function parseCommand(argv: string[], persisted: PersistedConfig = {}): Command {
-  if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
-    return { kind: "help" };
+export function parseCommand(argv: string[], cwd = process.cwd()): Command {
+  if (argv.length === 1 && ["--help", "-h"].includes(argv[0] ?? "")) return { kind: "help" };
+  if (argv.length === 1 && ["--version", "-v"].includes(argv[0] ?? "")) return { kind: "version" };
+  if (argv.length === 1 && argv[0] === "mcp") return { kind: "mcp" };
+  if (argv[0] === "run") {
+    const divider = argv.indexOf("--");
+    if (divider < 2 || divider === argv.length - 1) throw new UsageError("Usage: distill run <question> -- <command>");
+    const commandTokens = argv.slice(divider + 1);
+    const command = commandTokens.length === 1 ? commandTokens[0]! : commandTokens.map((token) => `'${token.replace(/'/g, "'\\\"'\\\"")}'`).join(" ");
+    return { kind: "run", request: { workspaceRoot: cwd, question: argv.slice(1, divider).join(" ").trim() || undefined, command } };
   }
-
-  if (argv.length === 1 && (argv[0] === "--version" || argv[0] === "-v")) {
-    return { kind: "version" };
+  if (argv[0] === "context") {
+    let intent: ContextIntent = "implement"; let baseRef: string | undefined; let inlineEvidenceFile: string | undefined;
+    const references: string[] = []; const objective: string[] = [];
+    for (let index = 1; index < argv.length; index += 1) {
+      const token = argv[index];
+      if (token === "--intent") { const value = argv[++index]; if (!value || !["implement", "advise", "review", "merge"].includes(value)) throw new UsageError("--intent must be implement, advise, review, or merge."); intent = value as ContextIntent; continue; }
+      if (token === "--reference") { const value = argv[++index]; if (!value) throw new UsageError("--reference requires a value."); references.push(value); continue; }
+      if (token === "--base-ref") { baseRef = argv[++index]; if (!baseRef) throw new UsageError("--base-ref requires a value."); continue; }
+      if (token === "--inline-evidence-file") { inlineEvidenceFile = argv[++index]; if (!inlineEvidenceFile) throw new UsageError("--inline-evidence-file requires a path."); continue; }
+      if (token?.startsWith("-")) throw new UsageError(`Unknown flag: ${token}`);
+      objective.push(token ?? "");
+    }
+    const joined = objective.join(" ").trim();
+    if (!joined) throw new UsageError("A retrieval objective is required.");
+    return { kind: "context", request: { workspaceRoot: cwd, intent, objective: joined, ...(references.length ? { references } : {}), ...(baseRef ? { baseRef } : {}) }, ...(inlineEvidenceFile ? { inlineEvidenceFile } : {}) };
   }
-
-  const defaults = resolveRuntimeDefaults(persisted);
-
-  if (argv[0] === "translate") {
-    let debug = false;
-    const translateArgs: string[] = [];
-
-    for (const token of argv.slice(1)) {
-      if (token === "--debug") {
-        debug = true;
-        continue;
-      }
-
-      if (token.startsWith("-")) {
-        throw new UsageError(`Unknown flag: ${token}`);
-      }
-
-      translateArgs.push(token);
-    }
-
-    if (!translateArgs[0]?.trim()) {
-      throw new UsageError("/distill text is required.");
-    }
-
-    if (translateArgs.length > 2) {
-      throw new UsageError("Usage: distill translate <text> [language]");
-    }
-
-    return {
-      kind: "translate",
-      text: translateArgs[0],
-      language: translateArgs[1] ?? "en-US",
-      config: {
-        ...runtimeConfig(defaults, "Translate /distill output into human language."),
-        debug,
-      },
-    };
-  }
-
-  let debug = false;
-  const questionParts: string[] = [];
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index];
-
-    if (token === "--") {
-      questionParts.push(...argv.slice(index + 1));
-      break;
-    }
-
-    if (token === "--debug") {
-      debug = true;
-      continue;
-    }
-
-    if (!token || token.startsWith("-")) {
-      throw new UsageError(`Unknown flag: ${token}`);
-    }
-
-    questionParts.push(token);
-  }
-
-  const question = questionParts.join(" ").trim();
-
-  if (!question) {
-    throw new UsageError("A question is required.");
-  }
-
-  return {
-    kind: "run",
-    config: { ...runtimeConfig(defaults, question), debug },
-  };
+  throw new UsageError("Usage: distill mcp | distill context ... | distill run <question> -- <command>");
 }
 
 export function formatUsage(): string {
-  return [
-    "Usage:",
-    '  cmd 2>&1 | distill "question"',
-    '  distill translate "distill output" [language]',
-    "  Edit distill.config.ts for persistent configuration",
-    "",
-    "Options:",
-    "  --debug               Print fallback and request diagnostics to stderr",
-    "  --help                Show usage",
-    "  --version             Show version",
-  ].join("\n");
+  return ["Usage:", "  distill mcp", "  distill context --intent implement --reference task-083 \"Prepare repository context.\"", "  distill run \"Report failures with paths and line numbers\" -- pnpm lint", "", "Configuration: distill.config.ts"].join("\n");
 }

@@ -1,7 +1,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { PersistedConfig } from "./config";
+import type { DistillConfig } from "./config";
 
 export function resolveConfigBaseDir(): string {
   return process.cwd();
@@ -13,12 +13,12 @@ export function resolveConfigPath(cwd = process.cwd()): string {
 
 export async function readPersistedConfig(
   cwd = process.cwd(),
-): Promise<PersistedConfig> {
+): Promise<DistillConfig> {
   const configPath = resolveConfigPath(cwd);
 
   try {
     const moduleUrl = `${pathToFileURL(configPath).href}?distill=${Date.now()}`;
-    const parsed = (await import(moduleUrl)).default as PersistedConfig;
+    const parsed = (await import(moduleUrl)).default as DistillConfig;
 
     if (!parsed || typeof parsed !== "object") {
       return {};

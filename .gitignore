@@ -1,6 +1,7 @@
 node_modules/
 .dist/
 coverage/
+.telemetry/
 packages/distill-*/bin/distill*
 npm-debug.log*
 *.tgz
