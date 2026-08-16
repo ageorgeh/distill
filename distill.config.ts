@@ -13,8 +13,10 @@ export default {
     model: "gpt-5.3-codex-spark",
     codexCommand: "codex",
     reasoningEffort: "low",
-    timeoutMs: 300_000,
+    timeoutMs: 90_000,
+    wrapUpAfterMs: 45_000,
     childToolOutputTokenLimit: 2_000,
+    maxChildToolCalls: 30,
   },
   telemetry: { directory: ".telemetry" },
 } satisfies DistillConfig;

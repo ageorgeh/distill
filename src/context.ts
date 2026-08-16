@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
-import type { ContextGatherRequest, ContextRequest, ResolvedConfig } from "./config";
+import type { ContextGatherRequest, ResolvedConfig } from "./config";
 import { resolveToolOutputTokenLimit, resultBudget, type ResolvedToolOutputLimit } from "./codex-config";
 import { createCodexContextProvider, type ContextAgentProvider } from "./context-agent";
-import { buildContextBundle } from "./context-packet";
-import { readContextPacket, writeContextBundle } from "./context-store";
+import { buildContextSourcePack } from "./context-source-pack";
 import { readRepositoryConfig } from "./repo-config";
 import { resolveTelemetryDirectory, telemetryId, writeTelemetry } from "./telemetry";
 
@@ -14,31 +13,26 @@ export interface ContextHandlerDependencies {
   resolveLimit?: () => Promise<ResolvedToolOutputLimit>;
   telemetryDirectory?: string;
 }
+export interface ContextHandlerOptions { signal?: AbortSignal; }
 
 function limitTelemetry(resolved: ResolvedToolOutputLimit) {
   return { resolvedToolOutputTokenLimit: resolved.limit, toolOutputLimitSource: resolved.source, ...(resolved.configPath ? { toolOutputConfigPath: resolved.configPath } : {}) };
 }
 
 export function createContextHandler(config: ResolvedConfig, dependencies: ContextHandlerDependencies = {}) {
-  return async (request: ContextRequest): Promise<string> => {
+  return async (request: ContextGatherRequest, options: ContextHandlerOptions = {}): Promise<string> => {
     const telemetryRoot = resolveTelemetryDirectory(config.telemetry.directory, dependencies.telemetryDirectory);
-    if (request.action === "packet") {
-      const startedAt = Date.now();
-      try {
-        const result = await readContextPacket(telemetryRoot, request.contextId, request.packetId);
-        await writeTelemetry(telemetryRoot, telemetryId(), { mode: "context-packet", contextId: request.contextId, packetId: request.packetId, durationMs: Date.now() - startedAt, resultBytes: Buffer.byteLength(result), providerInvoked: false });
-        return result;
-      } catch (error) {
-        await writeTelemetry(telemetryRoot, telemetryId(), { mode: "context-packet", contextId: request.contextId, packetId: request.packetId, durationMs: Date.now() - startedAt, providerInvoked: false, failure: error instanceof Error ? error.message : String(error) });
-        throw error;
-      }
-    }
-    return gather(config, request, dependencies, telemetryRoot);
+    return gather(config, request, dependencies, telemetryRoot, options);
   };
 }
 
-async function gather(config: ResolvedConfig, request: ContextGatherRequest, dependencies: ContextHandlerDependencies, telemetryRoot: string): Promise<string> {
+async function gather(config: ResolvedConfig, request: ContextGatherRequest, dependencies: ContextHandlerDependencies, telemetryRoot: string, options: ContextHandlerOptions): Promise<string> {
   const contextId = telemetryId(); const startedAt = Date.now();
+  let phase = "validate-request";
+  let response: Awaited<ReturnType<ContextAgentProvider["gather"]>> | undefined;
+  let resolved: ResolvedToolOutputLimit | undefined;
+  let budget: ReturnType<typeof resultBudget> | undefined;
+  let normalization: string[] | undefined;
   const base = {
     mode: "context-gather" as const, contextId, workspaceRoot: request.workspaceRoot, intent: request.intent, objective: request.objective,
     references: request.references ?? [], inlineEvidenceBytes: Buffer.byteLength(request.inlineEvidence ?? ""),
@@ -48,23 +42,37 @@ async function gather(config: ResolvedConfig, request: ContextGatherRequest, dep
   try {
     if (!path.isAbsolute(request.workspaceRoot)) throw new Error("workspaceRoot must be an absolute path.");
     const workspaceRoot = await realpath(request.workspaceRoot);
-    const [repositoryConfig, resolved] = await Promise.all([readRepositoryConfig(workspaceRoot), (dependencies.resolveLimit ?? resolveToolOutputTokenLimit)()]);
-    const budget = resultBudget(resolved);
+    phase = "resolve-config";
+    const [repositoryConfig, resolvedLimit] = await Promise.all([readRepositoryConfig(workspaceRoot), (dependencies.resolveLimit ?? resolveToolOutputTokenLimit)()]);
+    resolved = resolvedLimit;
+    budget = resultBudget(resolved);
     const effectiveRequest: ContextGatherRequest = { ...request, workspaceRoot, ...(request.baseRef || !repositoryConfig.defaultBase ? {} : { baseRef: repositoryConfig.defaultBase }) };
-    const response = await (dependencies.provider ?? createCodexContextProvider(config.context)).gather({ request: effectiveRequest, repositoryConfig });
-    const built = await buildContextBundle({ contextId, workspaceRoot, manifest: response.manifest, resultByteBudget: budget.resultByteBudget });
-    const bundlePath = await writeContextBundle(telemetryRoot, built.bundle);
-    const returned = built.bundle.packets.find((packet) => packet.id === "index-1");
-    if (!returned) throw new Error("Context bundle did not produce an index packet.");
+    phase = "provider";
+    response = await (dependencies.provider ?? createCodexContextProvider(config.context)).gather({ request: effectiveRequest, repositoryConfig }, { signal: options.signal });
+    phase = "assemble-source-pack";
+    const built = await buildContextSourcePack({ contextId, workspaceRoot, manifest: response.manifest, resultByteBudget: budget.resultByteBudget });
+    normalization = built.normalization;
     await writeTelemetry(telemetryRoot, contextId, {
       ...base, durationMs: Date.now() - startedAt, ...(response.usage ? { providerUsage: response.usage } : {}), childCommandCalls: response.childToolCalls ?? 0,
-      ...limitTelemetry(resolved), ...budget, manifestValidation: built.normalization, concernCount: built.bundle.manifest.concerns.length, packetCount: built.bundle.packets.length,
-      packetIndex: built.bundle.packets.map(({ id, concernId, part, parts, bytes, requiredBefore, dependencies: packetDependencies }) => ({ id, concernId, part, parts, bytes, requiredBefore, dependencies: packetDependencies })),
-      returnedPacketId: returned.id, returnedPacketBytes: returned.bytes, bundlePath,
+      wrapUpPromptSent: response.wrapUpPromptSent ?? false,
+      ...(response.wrapUpReason ? { wrapUpReason: response.wrapUpReason } : {}),
+      ...limitTelemetry(resolved), ...budget, targetResultByteBudget: built.targetByteBudget, hardResultByteBudget: built.hardByteBudget,
+      broadContext: built.broad, manifestValidation: built.normalization, sourceManifest: built.manifest,
+      includedSources: built.includedSources, omittedSources: built.omittedSources, resultBytes: built.bytes,
     });
-    return returned.text;
+    return built.text;
   } catch (error) {
-    await writeTelemetry(telemetryRoot, contextId, { ...base, durationMs: Date.now() - startedAt, failure: error instanceof Error ? error.message : String(error) });
+    await writeTelemetry(telemetryRoot, contextId, {
+      ...base,
+      durationMs: Date.now() - startedAt,
+      failurePhase: phase,
+      failure: error instanceof Error ? error.message : String(error),
+      ...(response?.usage ? { providerUsage: response.usage } : {}),
+      ...(response ? { childCommandCalls: response.childToolCalls ?? 0, wrapUpPromptSent: response.wrapUpPromptSent ?? false, ...(response.wrapUpReason ? { wrapUpReason: response.wrapUpReason } : {}) } : {}),
+      ...(resolved ? limitTelemetry(resolved) : {}),
+      ...(budget ?? {}),
+      ...(normalization ? { manifestValidation: normalization } : {}),
+    });
     throw error;
   }
 }

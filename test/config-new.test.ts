@@ -9,15 +9,18 @@ import { resolveTelemetryDirectory } from "../src/telemetry";
 
 describe("new configuration", () => {
   it("resolves separate output and context settings", () => {
-    const config = resolveConfig({ output: { provider: "external", model: "small", host: "http://example.test/" }, context: { model: "spark", childToolOutputTokenLimit: 9000 } });
+    const config = resolveConfig({ output: { provider: "external", model: "small", host: "http://example.test/" }, context: { model: "spark", childToolOutputTokenLimit: 9000, maxChildToolCalls: 25 } });
     expect(config.output).toMatchObject({ provider: "external", model: "small", host: "http://example.test" });
-    expect(config.context).toMatchObject({ provider: "codex", model: "spark", childToolOutputTokenLimit: 9000 });
+    expect(config.context).toMatchObject({ provider: "codex", model: "spark", childToolOutputTokenLimit: 9000, maxChildToolCalls: 25 });
+    expect(config.context.wrapUpAfterMs).toBe(45_000);
+    expect(resolveConfig({ context: { timeoutMs: 60_000 } }).context.wrapUpAfterMs).toBe(40_000);
+    expect(() => resolveConfig({ context: { timeoutMs: 90_000, wrapUpAfterMs: 90_000 } })).toThrow("context.wrapUpAfterMs must be less than context.timeoutMs");
   });
 
   it("parses the new CLI commands", () => {
     expect(parseCommand(["run", "status", "--", "pnpm", "lint"], "/repo")).toMatchObject({ kind: "run", request: { workspaceRoot: "/repo" } });
     expect(parseCommand(["context", "gather", "--intent", "review", "--reference", "task-083", "--reference", "src/a.ts", "--base-ref", "dev", "Gather evidence"], "/repo")).toEqual({ kind: "context", request: { action: "gather", workspaceRoot: "/repo", intent: "review", objective: "Gather evidence", references: ["task-083", "src/a.ts"], baseRef: "dev" } });
-    expect(parseCommand(["context", "packet", "123e4567-e89b-12d3-a456-426614174000", "owner-1"], "/repo")).toEqual({ kind: "context", request: { action: "packet", contextId: "123e4567-e89b-12d3-a456-426614174000", packetId: "owner-1" } });
+    expect(() => parseCommand(["context", "packet", "123e4567-e89b-12d3-a456-426614174000", "owner-1"], "/repo")).toThrow("Usage: distill context gather");
   });
 
   it("reads only the top-level Codex limit and small repository TOML", async () => {

@@ -1,14 +1,14 @@
 # distill
 
-`distill` is a stdio MCP server with exactly two tools: `context` for one bounded Spark repository-discovery pass and `run` for bounded command output. It reduces context cost; it does not replace the capable agent's task understanding, exact source reading, review, edits, or correctness decisions.
+`distill` is a stdio MCP server with exactly two tools: `context` for one bounded Spark repository-discovery and source-reading pass, and `run` for bounded command output. It replaces the capable agent's initial broad repository exploration; it does not replace task understanding, implementation reasoning, review, edits, or correctness decisions.
 
 ## Context workflow
 
-The capable agent reads and understands the authoritative task, review finding, specification, or merge request first. It then calls context gather with a complete repository-context objective. Spark gathers repository facts only: inspected owners, callers, tests, generated boundaries, documentation, completed searches, exact excerpts, executable validation, and genuine gaps. It must not return a rewritten task.
+The capable agent reads and understands the authoritative task, review finding, specification, or merge request first. It then calls context gather with a complete repository-context objective. Spark performs the searches and reads that the capable agent would otherwise perform one command at a time. It returns only verified files and ranges, mechanical search locations, and validation commands. Distill reads the ranges from disk and returns their exact source in the same tool response.
 
-Gather runs Spark exactly once and returns `index-1`. The index lists global and concern packets. Fetch packets marked required before any edit before editing; before working on a concern, fetch its packets and dependency packets. Packet retrieval reads the stored bundle and never reruns Spark, including after an MCP-server restart. Do not repeat `SEARCHES DONE`, broadly reread `INSPECTED`, or reread `EXACT SOURCE`; use targeted reads only for an identified gap.
+Gather runs Spark exactly once and returns one flat, deduplicated source bundle. There are no indexes, concerns, dependencies, packets, or retrieval calls. Treat `EXACT SOURCE` as already read and do not repeat completed searches. Make only targeted follow-up reads when editing needs surrounding code or newly discovered details.
 
-Large context is split by semantic concerns rather than truncated. Packets use `INSPECTED` for files Spark read and what it found, `SEARCHES DONE` for already-completed discovery, `EXACT SOURCE` for complete labelled source ranges, `RELATED` for relevant uninspected paths, and `GAPS` only for real unresolved repository evidence.
+The normal target is about 10,000 tokens. Broad tasks may use the resolved one-tool hard budget, approximately 20,000 tokens when Codex is configured as shown below. Distill merges duplicate ranges, splits large ranges safely, distributes exact source across direct owners first, and degrades secondary material to precise `path:line-range` locations. It never creates follow-up context calls or fails merely because all candidate source does not fit. Telemetry retains the complete normalized candidate manifest and records which ranges were inlined.
 
 ```json
 {
@@ -20,15 +20,7 @@ Large context is split by semantic concerns rather than truncated. Packets use `
 }
 ```
 
-```json
-{
-  "action": "packet",
-  "contextId": "<context-id-from-index>",
-  "packetId": "cleanup-fencing-1"
-}
-```
-
-Bundles are functional state, stored atomically under `.telemetry/contexts/<context-id>/bundle.json` in the Distill installation root. Invocation telemetry is under `.telemetry/invocations/`; it is gitignored and omits raw command output and full inline evidence.
+Invocation telemetry is stored under `.telemetry/invocations/` in the Distill installation root. It is gitignored, records the complete normalized source manifest and included/omitted ranges, and omits raw child-command output and full inline evidence.
 
 ## Command output
 
@@ -45,10 +37,12 @@ import type { DistillConfig } from "./src/config";
 
 export default {
   output: { provider: "codex", model: "gpt-5.3-codex-spark", codexCommand: "codex", timeoutMs: 180_000, smallOutputBytes: 2_000 },
-  context: { provider: "codex", model: "gpt-5.3-codex-spark", codexCommand: "codex", reasoningEffort: "low", timeoutMs: 300_000, childToolOutputTokenLimit: 2_000 },
+  context: { provider: "codex", model: "gpt-5.3-codex-spark", codexCommand: "codex", reasoningEffort: "low", timeoutMs: 90_000, wrapUpAfterMs: 45_000, childToolOutputTokenLimit: 2_000, maxChildToolCalls: 30 },
   telemetry: { directory: ".telemetry" },
 } satisfies DistillConfig;
 ```
+
+The supplied context objective is quoted as the parent agent's task; Spark is instructed to retrieve source for that task, not solve it. `wrapUpAfterMs` and `maxChildToolCalls` are soft limits: Distill steers Spark to stop discovery and return its best verified manifest. `timeoutMs` is the hard deadline.
 
 Repositories may add `.distill/config.toml`:
 
@@ -58,7 +52,7 @@ documentation_indexes = ["packages/modules/base/docs/llms.txt"]
 default_base = "dev"
 ```
 
-Global and repository `AGENTS.md` instructions should require capable agents to read authoritative tasks before `context` gather, then use the packet index before broad discovery. This repository's Nix-managed global instructions and CMS root instructions follow that workflow.
+Global and repository `AGENTS.md` instructions should require capable agents to read authoritative tasks before `context` gather, treat its exact source as their initial read pass, and avoid repeating that discovery. This machine's global instructions and CMS root instructions follow that workflow.
 
 ### Linux prerequisite
 
@@ -73,12 +67,17 @@ args = ["mcp"]
 cwd = "/home/alex/code/distill"
 required = true
 enabled_tools = ["context", "run"]
-tool_timeout_sec = 300
+tool_timeout_sec = 120
+```
+
+Set the top-level Codex result-history budget high enough for one broad context response:
+
+```toml
+tool_output_token_limit = 24000
 ```
 
 ```bash
 distill mcp
 distill context gather --intent implement --reference task-083 "Gather repository implementation context for the accepted durable-media fixes."
-distill context packet <context-id> <packet-id>
 distill run "Report root causes and the exit code" -- pnpm run verify
 ```

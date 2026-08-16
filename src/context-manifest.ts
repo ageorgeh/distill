@@ -3,63 +3,39 @@ import * as v from "valibot";
 
 const text = (limit: number) => v.pipe(v.string(), v.minLength(1), v.maxLength(limit));
 const priority = v.picklist([1, 2, 3]);
-const source = v.strictObject({
-  path: text(1_024),
-  startLine: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
-  endLine: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
+const excerpt = v.strictObject({
+  startLine: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  endLine: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  reason: text(300),
 });
-const finding = v.strictObject({ text: text(900), priority, source: v.optional(source) });
-const observation = v.strictObject({
-  text: text(900),
-  startLine: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
-  endLine: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
-});
-const excerpt = v.strictObject({ startLine: v.pipe(v.number(), v.integer(), v.minValue(1)), endLine: v.pipe(v.number(), v.integer(), v.minValue(1)), reason: text(400) });
 const contextFile = v.strictObject({
   path: text(1_024),
   role: v.picklist(["edit", "caller", "test", "documentation", "generated", "configuration", "changed", "conflict"]),
-  inspected: v.boolean(),
-  relevance: text(600),
+  relevance: text(400),
   priority,
-  observations: v.array(observation),
-  excerpts: v.array(excerpt),
+  excerpts: v.pipe(v.array(excerpt), v.minLength(1), v.maxLength(8)),
 });
-const search = v.strictObject({ query: text(500), scope: v.optional(text(600)), result: text(900), priority });
-const concern = v.strictObject({
-  id: v.pipe(text(64), v.regex(/^[a-z0-9][a-z0-9-]*$/)),
-  title: text(160),
-  summary: text(800),
-  priority,
-  dependencies: v.array(v.pipe(text(64), v.regex(/^[a-z0-9][a-z0-9-]*$/))),
-  findings: v.array(finding),
-  files: v.array(contextFile),
-  searchesCompleted: v.array(search),
-  validation: v.array(text(1_000)),
-  gaps: v.array(text(900)),
+const search = v.strictObject({
+  query: text(500),
+  scope: v.optional(text(600)),
+  matches: v.pipe(v.array(text(500)), v.minLength(1), v.maxLength(20)),
 });
 
+/** Spark returns only a flat list of source it actually inspected. Distill reads the exact ranges itself. */
 export const contextManifestSchema = v.strictObject({
-  scope: text(800),
-  globalFindings: v.array(finding),
-  globalFiles: v.array(contextFile),
-  globalSearchesCompleted: v.array(search),
-  globalValidation: v.array(text(1_000)),
-  globalGaps: v.array(text(900)),
-  concerns: v.array(concern),
+  files: v.pipe(v.array(contextFile), v.maxLength(40)),
+  searchesCompleted: v.pipe(v.array(search), v.maxLength(20)),
+  validation: v.pipe(v.array(text(1_000)), v.maxLength(20)),
 });
 
 export type ContextPriority = v.InferOutput<typeof priority>;
-export type ContextSource = v.InferOutput<typeof source>;
-export type ContextFinding = v.InferOutput<typeof finding>;
-export type ContextObservation = v.InferOutput<typeof observation>;
 export type ContextExcerptRequest = v.InferOutput<typeof excerpt>;
 export type ContextFile = v.InferOutput<typeof contextFile>;
 export type ContextSearch = v.InferOutput<typeof search>;
-export type ContextConcern = v.InferOutput<typeof concern>;
 export type ContextManifest = v.InferOutput<typeof contextManifestSchema>;
 export const contextManifestJsonSchema = toJsonSchema(contextManifestSchema);
 
-/** Codex requires every object field to be required, so source optionality is nullable at the protocol edge. */
+/** Codex structured outputs require every property to be required and every object to be closed. */
 function codexSchema(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(codexSchema);
   if (!schema || typeof schema !== "object") return schema;
@@ -92,32 +68,8 @@ function executable(command: string): boolean {
   return /^[a-zA-Z0-9_./][^\n]*$/.test(command) && !/^(none|n\/a|unknown|not run)$/i.test(command.trim());
 }
 
-function validateFiles(files: ContextFile[]): void {
-  for (const file of files) if (!file.inspected && (file.observations.length || file.excerpts.length)) throw new Error(`Uninspected file ${file.path} contains evidence.`);
-}
-
 export function parseContextManifest(value: unknown): ContextManifest {
   const manifest = v.parse(contextManifestSchema, omitNulls(value));
-  const ids = new Set<string>();
-  for (const item of manifest.concerns) {
-    if (ids.has(item.id)) throw new Error(`Duplicate concern ID: ${item.id}.`);
-    ids.add(item.id);
-    validateFiles(item.files);
-    if (item.validation.some((command) => !executable(command))) throw new Error(`Concern ${item.id} has a non-executable validation command.`);
-  }
-  validateFiles(manifest.globalFiles);
-  if (manifest.globalValidation.some((command) => !executable(command))) throw new Error("Global validation contains a non-executable command.");
-  for (const item of manifest.concerns) for (const dependency of item.dependencies) {
-    if (dependency === item.id) throw new Error(`Concern ${item.id} cannot depend on itself.`);
-    if (!ids.has(dependency)) throw new Error(`Concern ${item.id} depends on missing concern ${dependency}.`);
-  }
-  const visiting = new Set<string>(); const visited = new Set<string>();
-  const byId = new Map(manifest.concerns.map((item) => [item.id, item]));
-  const visit = (id: string) => {
-    if (visiting.has(id)) throw new Error(`Concern dependency cycle includes ${id}.`);
-    if (visited.has(id)) return;
-    visiting.add(id); for (const dependency of byId.get(id)!.dependencies) visit(dependency); visiting.delete(id); visited.add(id);
-  };
-  for (const id of ids) visit(id);
+  if (manifest.validation.some((command) => !executable(command))) throw new Error("Context validation contains a non-executable command.");
   return manifest;
 }
