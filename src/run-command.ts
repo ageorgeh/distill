@@ -10,10 +10,37 @@ export const DEFAULT_RUN_QUESTION = "Report whether the command succeeded. If it
 interface CapturedCommand { stdout: string; stderr: string; exitCode: number | null; terminationError?: string; }
 type ResolveLimit = () => Promise<ResolvedToolOutputLimit | number>;
 
+export function resolveCommandShell(
+  command: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): { executable: string; args: string[] } {
+  if (platform === "win32") {
+    return { executable: environment.ComSpec?.trim() || "cmd.exe", args: ["/d", "/s", "/c", command] };
+  }
+  return { executable: environment.SHELL?.trim() || "/bin/sh", args: ["-l", "-c", command] };
+}
+
+export function resolveCommandEnvironment(
+  inherited: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const environment = { ...inherited };
+  if (platform !== "win32") delete environment.__NIXOS_SET_ENVIRONMENT_DONE;
+  return environment;
+}
+
 function execute(command: string, cwd: string, timeoutMs: number): Promise<CapturedCommand> {
   return new Promise((resolve) => {
     let stdout = ""; let stderr = ""; let done = false;
-    const child = spawn(command, { cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] }) as unknown as ChildProcessWithoutNullStreams;
+    const environment = resolveCommandEnvironment();
+    const shell = resolveCommandShell(command, environment);
+    const child = spawn(shell.executable, shell.args, {
+      cwd,
+      env: environment,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    }) as unknown as ChildProcessWithoutNullStreams;
     const finish = (result: CapturedCommand) => { if (!done) { done = true; clearTimeout(timer); resolve(result); } };
     const timer = setTimeout(() => { child.kill(); finish({ stdout, stderr, exitCode: null, terminationError: `Command timed out after ${timeoutMs}ms.` }); }, timeoutMs);
     child.stdout.on("data", (chunk) => { stdout += String(chunk); }); child.stderr.on("data", (chunk) => { stderr += String(chunk); });

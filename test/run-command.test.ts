@@ -3,9 +3,39 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { resolveConfig } from "../src/config";
-import { createRunHandler } from "../src/run-command";
+import { createRunHandler, resolveCommandEnvironment, resolveCommandShell } from "../src/run-command";
 
 describe("run", () => {
+  it("uses a login shell while preserving the complete inherited environment", async () => {
+    expect(resolveCommandShell("printf ok", { SHELL: "/bin/bash" }, "linux")).toEqual({
+      executable: "/bin/bash",
+      args: ["-l", "-c", "printf ok"],
+    });
+    expect(resolveCommandShell("echo ok", { ComSpec: "C:\\Windows\\System32\\cmd.exe" }, "win32")).toEqual({
+      executable: "C:\\Windows\\System32\\cmd.exe",
+      args: ["/d", "/s", "/c", "echo ok"],
+    });
+    expect(resolveCommandEnvironment({ KEEP: "yes", __NIXOS_SET_ENVIRONMENT_DONE: "1" }, "linux")).toEqual({ KEEP: "yes" });
+    expect(resolveCommandEnvironment({ KEEP: "yes", __NIXOS_SET_ENVIRONMENT_DONE: "1" }, "win32")).toEqual({
+      KEEP: "yes",
+      __NIXOS_SET_ENVIRONMENT_DONE: "1",
+    });
+
+    const key = "DISTILL_INHERITED_ENV_TEST";
+    const previous = process.env[key];
+    process.env[key] = "available-to-child";
+    try {
+      const telemetry = await mkdtemp(path.join(tmpdir(), "distill-run-env-"));
+      try {
+        const run = createRunHandler(resolveConfig({}), { telemetryDirectory: telemetry });
+        expect(await run({ workspaceRoot: process.cwd(), command: `printf '%s' "$${key}"` })).toContain("available-to-child");
+      } finally { await rm(telemetry, { recursive: true, force: true }); }
+    } finally {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    }
+  });
+
   it("reports silent commands and returns small output directly", async () => {
     const telemetry = await mkdtemp(path.join(tmpdir(), "distill-run-telemetry-"));
     try {

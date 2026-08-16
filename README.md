@@ -24,7 +24,7 @@ Invocation telemetry is stored under `.telemetry/invocations/` in the Distill in
 
 ## Command output
 
-`run` executes builds, tests, lint, formatting, type checks, logs, and mechanical searches. It always returns an exit status. Small output is direct; large output is summarized within the resolved parent result budget. Successful validation is kept concise, while cascaded failures are collapsed to their shared root cause and a few representative failures. Provider output is semantically bounded on complete lines, never by clipping paths or diagnostics mid-item.
+`run` executes builds, tests, lint, formatting, type checks, logs, and mechanical searches. It always returns an exit status. Small output is direct; large output is summarized within the resolved parent result budget. Successful validation is kept concise, while cascaded failures are collapsed to their shared root cause and a few representative failures. Provider output is semantically bounded on complete lines, never by clipping paths or diagnostics mid-item. On Unix, commands run through the user's login shell while retaining Distill's complete inherited environment. NixOS's child-shell environment guard is cleared so the login shell reloads the complete generated machine/session environment, rather than preserving a partially filtered MCP snapshot.
 
 There is no pipeline interface: do not pipe output into Distill. Use `run` only for command output, not code review or exact-source reading.
 
