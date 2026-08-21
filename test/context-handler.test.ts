@@ -5,6 +5,14 @@ import path from "node:path";
 import { resolveConfig } from "../src/config";
 import { createContextHandler } from "../src/context";
 import type { ContextAgentProvider } from "../src/context-agent";
+import type { GortexContextProvider } from "../src/gortex-context";
+
+function retriever(counter?: { calls: number }): GortexContextProvider {
+  return { gather: async () => {
+    if (counter) counter.calls += 1;
+    return { text: "graph candidates", durationMs: 5, bytes: 16, rawBytes: 16, truncated: false, command: ["gortex", "explore"], supplementedReferences: [] };
+  } };
+}
 
 function provider(counter: { calls: number }): ContextAgentProvider {
   return { gather: async () => {
@@ -27,9 +35,11 @@ describe("single-response context gathering", () => {
     try {
       await writeFile(path.join(root, "worker.ts"), "export const worker = true;\n", "utf8");
       const counter = { calls: 0 };
-      const gather = createContextHandler(resolveConfig({}), { provider: provider(counter), telemetryDirectory: telemetry, resolveLimit: async () => ({ limit: 24_000, source: "default" }) });
+      const retrievalCounter = { calls: 0 };
+      const gather = createContextHandler(resolveConfig({}), { provider: provider(counter), retriever: retriever(retrievalCounter), telemetryDirectory: telemetry, resolveLimit: async () => ({ limit: 24_000, source: "default" }) });
       const result = await gather({ action: "gather", workspaceRoot: root, intent: "implement", objective: "Gather handler context." });
       expect(counter.calls).toBe(1);
+      expect(retrievalCounter.calls).toBe(1);
       expect(result).toContain("DISTILL CONTEXT");
       expect(result).toContain("EXACT SOURCE\nworker.ts:1-1");
       expect(result).not.toContain("packet");
@@ -38,6 +48,7 @@ describe("single-response context gathering", () => {
       expect(stored).toMatchObject({
         providerUsage: { inputTokens: 100, outputTokens: 20 }, childCommandCalls: 3, wrapUpPromptSent: true,
         wrapUpReason: "time", broadContext: false, resultBytes: Buffer.byteLength(result),
+        gortex: { durationMs: 5, bytes: 16, rawBytes: 16, truncated: false, command: ["gortex", "explore"] },
       });
       expect(stored.sourceManifest).toBeDefined();
     } finally { await rm(root, { recursive: true, force: true }); await rm(telemetry, { recursive: true, force: true }); }
@@ -54,7 +65,7 @@ describe("single-response context gathering", () => {
           searchesCompleted: [], validation: [],
         },
       }) };
-      const gather = createContextHandler(resolveConfig({}), { provider: durableProvider, telemetryDirectory: telemetry, resolveLimit: async () => ({ limit: 24_000, source: "default" }) });
+      const gather = createContextHandler(resolveConfig({}), { provider: durableProvider, retriever: retriever(), telemetryDirectory: telemetry, resolveLimit: async () => ({ limit: 24_000, source: "default" }) });
       const result = await gather({ action: "gather", workspaceRoot: root, intent: "implement", objective: "Gather durable context." });
       expect(result).toContain("task.md:1-80");
       expect(result).toContain("260 | task line 260");
@@ -73,7 +84,7 @@ describe("single-response context gathering", () => {
         if (options?.signal?.aborted) { reject(new Error("provider cancelled")); return; }
         options?.signal?.addEventListener("abort", () => reject(new Error("provider cancelled")), { once: true });
       }) };
-      const gather = createContextHandler(resolveConfig({}), { provider, telemetryDirectory: telemetry });
+      const gather = createContextHandler(resolveConfig({}), { provider, retriever: retriever(), telemetryDirectory: telemetry });
       const controller = new AbortController();
       const result = gather({ action: "gather", workspaceRoot: root, intent: "advise", objective: "Gather until cancelled." }, { signal: controller.signal });
       controller.abort();

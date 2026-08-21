@@ -1,12 +1,12 @@
 # distill
 
-`distill` is a stdio MCP server with exactly two tools: `context` for one bounded Spark repository-discovery and source-reading pass, and `run` for bounded command output. It replaces the capable agent's initial broad repository exploration; it does not replace task understanding, implementation reasoning, review, edits, or correctness decisions.
+`distill` is a stdio MCP server with exactly two tools: `context` for deterministic Gortex discovery followed by one bounded Spark evidence-selection pass, and `run` for bounded command output. It replaces the capable agent's initial broad repository exploration; it does not replace task understanding, implementation reasoning, review, edits, or correctness decisions.
 
 ## Context workflow
 
-The capable agent reads and understands the authoritative task, review finding, specification, or merge request first. It then calls context gather with a complete repository-context objective. Spark performs the searches and reads that the capable agent would otherwise perform one command at a time. It returns only verified files and ranges, mechanical search locations, and validation commands. Distill reads the ranges from disk and returns their exact source in the same tool response.
+The capable agent reads and understands the authoritative task, review finding, specification, or merge request first. It then calls context gather with a complete repository-context objective. Distill runs one generous graph-only `gortex explore` in TOON format, unions explicit file references omitted by graph ranking, and gives that precomputed candidate context to Spark. Spark only selects verified files and ranges; it has no shell or graph tools. Distill reads the selected ranges from disk and returns their exact source in the same tool response.
 
-Gather runs Spark exactly once and returns one flat, deduplicated source bundle. There are no indexes, concerns, dependencies, packets, or retrieval calls. Treat `EXACT SOURCE` as already read and do not repeat completed searches. Make only targeted follow-up reads when editing needs surrounding code or newly discovered details.
+Gather runs Gortex once and Spark exactly once, with no discovery follow-up, and returns one flat, deduplicated source bundle. The target repository must already be tracked by the shared Gortex daemon. Treat `EXACT SOURCE` as already read and do not repeat completed searches. Make only targeted follow-up reads when editing needs surrounding code or newly discovered details.
 
 The normal target is about 10,000 tokens. Broad tasks may use the resolved one-tool hard budget, approximately 20,000 tokens when Codex is configured as shown below. Distill merges duplicate ranges, splits large ranges safely, distributes exact source across direct owners first, and degrades secondary material to precise `path:line-range` locations. It never creates follow-up context calls or fails merely because all candidate source does not fit. Telemetry retains the complete normalized candidate manifest and records which ranges were inlined.
 
@@ -37,12 +37,12 @@ import type { DistillConfig } from "./src/config";
 
 export default {
   output: { provider: "codex", model: "gpt-5.3-codex-spark", codexCommand: "codex", timeoutMs: 180_000, smallOutputBytes: 2_000 },
-  context: { provider: "codex", model: "gpt-5.3-codex-spark", codexCommand: "codex", reasoningEffort: "low", timeoutMs: 90_000, wrapUpAfterMs: 45_000, childToolOutputTokenLimit: 2_000, maxChildToolCalls: 30 },
+  context: { provider: "codex", model: "gpt-5.3-codex-spark", codexCommand: "codex", reasoningEffort: "low", timeoutMs: 90_000, gortexCommand: "gortex", gortexTimeoutMs: 30_000, gortexMaxSymbols: 100, gortexMaxOutputBytes: 200_000 },
   telemetry: { directory: ".telemetry" },
 } satisfies DistillConfig;
 ```
 
-The supplied context objective is quoted as the parent agent's task; Spark is instructed to retrieve source for that task, not solve it. `wrapUpAfterMs` and `maxChildToolCalls` are soft limits: Distill steers Spark to stop discovery and return its best verified manifest. `timeoutMs` is the hard deadline.
+The supplied context objective is quoted as the parent agent's task. Gortex performs deterministic over-gathering with no LLM provider; Spark receives the result as inert candidate evidence and performs one tool-disabled manifest-selection inference rather than a repository-discovery loop. `gortexMaxSymbols` defaults to 100, `gortexMaxOutputBytes` defaults to 200,000 bytes (about 50,000 tokens), `gortexTimeoutMs` defaults to 30 seconds, and `timeoutMs` is Spark's hard deadline. `gortexCommand` may select a non-standard CLI path.
 
 Repositories may add `.distill/config.toml`:
 

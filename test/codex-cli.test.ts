@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 
 import { codexCliCompletion, tomlBasicString } from "../src/codex-cli";
@@ -23,12 +24,15 @@ describe("codexCliCompletion", () => {
     let stdin = "";
     let directory = "";
     let instructions = "";
+    let schema: unknown;
 
     const output = await codexCliCompletion({
       model: "selected-spark",
       executable: "custom codex",
       prompt,
       timeoutMs: 1000,
+      reasoningEffort: "low",
+      outputSchema: { type: "object" },
       dependencies: {
         mkdtemp: async (prefix) => {
           directory = await mkdtemp(prefix);
@@ -45,6 +49,7 @@ describe("codexCliCompletion", () => {
             const instructionArg = processArgs.find((value) => value.startsWith("model_instructions_file="))!;
             const instructionPath = JSON.parse(instructionArg.slice(instructionArg.indexOf("=") + 1));
             instructions = await readFile(instructionPath, "utf8");
+            schema = JSON.parse(await readFile(path.join(directory, "output-schema.json"), "utf8"));
             const outputPath = processArgs[processArgs.indexOf("--output-last-message") + 1]!;
             await writeFile(outputPath, "  FINAL ONLY  \n");
             child.stdout.write("ordinary stdout must be ignored");
@@ -60,6 +65,8 @@ describe("codexCliCompletion", () => {
     expect(executable).toBe("custom codex");
     expect(stdin).toBe(prompt.user);
     expect(args).toContain("selected-spark");
+    expect(args).toEqual(expect.arrayContaining(["--output-schema", path.join(directory, "output-schema.json"), "-c", 'model_reasoning_effort="low"']));
+    expect(schema).toEqual({ type: "object" });
     expect(args).toEqual(expect.arrayContaining([
       "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules",
       'approval_policy="never"', "--sandbox", "read-only",

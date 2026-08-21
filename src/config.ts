@@ -11,6 +11,10 @@ export const DEFAULT_SMALL_OUTPUT_BYTES = 2_000;
 export const DEFAULT_PARENT_TOOL_OUTPUT_LIMIT = 2_500;
 export const DEFAULT_CONTEXT_CHILD_TOOL_OUTPUT_LIMIT = 2_000;
 export const DEFAULT_CONTEXT_MAX_CHILD_TOOL_CALLS = 30;
+export const DEFAULT_GORTEX_COMMAND = "gortex";
+export const DEFAULT_GORTEX_TIMEOUT_MS = 30_000;
+export const DEFAULT_GORTEX_MAX_SYMBOLS = 100;
+export const DEFAULT_GORTEX_MAX_OUTPUT_BYTES = 200_000;
 export const DEFAULT_LOCAL_BACKEND = "auto";
 export const DEFAULT_LOCAL_CONCURRENCY = 5;
 export const DEFAULT_LOCAL_HOST = "127.0.0.1";
@@ -48,6 +52,10 @@ export interface ContextConfig {
   wrapUpAfterMs: number;
   childToolOutputTokenLimit: number;
   maxChildToolCalls: number;
+  gortexCommand: string;
+  gortexTimeoutMs: number;
+  gortexMaxSymbols: number;
+  gortexMaxOutputBytes: number;
 }
 
 export interface DistillConfig {
@@ -159,6 +167,10 @@ export function resolveConfig(config: DistillConfig = {}): ResolvedConfig {
     wrapUpAfterMs,
     childToolOutputTokenLimit: positive(rawContext.childToolOutputTokenLimit, DEFAULT_CONTEXT_CHILD_TOOL_OUTPUT_LIMIT, "context.childToolOutputTokenLimit"),
     maxChildToolCalls: positive(rawContext.maxChildToolCalls, DEFAULT_CONTEXT_MAX_CHILD_TOOL_CALLS, "context.maxChildToolCalls"),
+    gortexCommand: text(rawContext.gortexCommand, DEFAULT_GORTEX_COMMAND, "context.gortexCommand"),
+    gortexTimeoutMs: positive(rawContext.gortexTimeoutMs, DEFAULT_GORTEX_TIMEOUT_MS, "context.gortexTimeoutMs"),
+    gortexMaxSymbols: positive(rawContext.gortexMaxSymbols, DEFAULT_GORTEX_MAX_SYMBOLS, "context.gortexMaxSymbols"),
+    gortexMaxOutputBytes: positive(rawContext.gortexMaxOutputBytes, DEFAULT_GORTEX_MAX_OUTPUT_BYTES, "context.gortexMaxOutputBytes"),
   };
   return { output, context, telemetry: { directory: text(config.telemetry?.directory, ".telemetry", "telemetry.directory") } };
 }

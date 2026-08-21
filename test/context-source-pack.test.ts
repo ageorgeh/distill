@@ -34,6 +34,21 @@ describe("flat context source packs", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
+  it("normalizes the repository-label prefix emitted by Gortex", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "distill-source-label-"));
+    try {
+      await writeFile(path.join(root, "worker.ts"), "first\nsecond\n", "utf8");
+      const result = await buildContextSourcePack({
+        contextId: "123e4567-e89b-12d3-a456-426614174010",
+        workspaceRoot: root,
+        manifest: manifest([owner(`${path.basename(root)}/worker.ts`, [{ startLine: 1, endLine: 2, reason: "Labelled owner." }])]),
+        resultByteBudget: 40_000,
+      });
+      expect(result.manifest.files[0]?.path).toBe("worker.ts");
+      expect(result.text).toContain("EXACT SOURCE\nworker.ts:1-2");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it("splits broad excerpts into exact source chunks instead of dropping them", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "distill-source-split-"));
     try {

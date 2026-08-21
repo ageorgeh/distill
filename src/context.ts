@@ -5,11 +5,13 @@ import type { ContextGatherRequest, ResolvedConfig } from "./config";
 import { resolveToolOutputTokenLimit, resultBudget, type ResolvedToolOutputLimit } from "./codex-config";
 import { createCodexContextProvider, type ContextAgentProvider } from "./context-agent";
 import { buildContextSourcePack } from "./context-source-pack";
+import { createGortexContextProvider, type GortexContextProvider, type GortexContextResult } from "./gortex-context";
 import { readRepositoryConfig } from "./repo-config";
 import { resolveTelemetryDirectory, telemetryId, writeTelemetry } from "./telemetry";
 
 export interface ContextHandlerDependencies {
   provider?: ContextAgentProvider;
+  retriever?: GortexContextProvider;
   resolveLimit?: () => Promise<ResolvedToolOutputLimit>;
   telemetryDirectory?: string;
 }
@@ -30,6 +32,7 @@ async function gather(config: ResolvedConfig, request: ContextGatherRequest, dep
   const contextId = telemetryId(); const startedAt = Date.now();
   let phase = "validate-request";
   let response: Awaited<ReturnType<ContextAgentProvider["gather"]>> | undefined;
+  let retrieval: GortexContextResult | undefined;
   let resolved: ResolvedToolOutputLimit | undefined;
   let budget: ReturnType<typeof resultBudget> | undefined;
   let normalization: string[] | undefined;
@@ -47,8 +50,10 @@ async function gather(config: ResolvedConfig, request: ContextGatherRequest, dep
     resolved = resolvedLimit;
     budget = resultBudget(resolved);
     const effectiveRequest: ContextGatherRequest = { ...request, workspaceRoot, ...(request.baseRef || !repositoryConfig.defaultBase ? {} : { baseRef: repositoryConfig.defaultBase }) };
+    phase = "gortex-overgather";
+    retrieval = await (dependencies.retriever ?? createGortexContextProvider(config.context)).gather(effectiveRequest, { signal: options.signal });
     phase = "provider";
-    response = await (dependencies.provider ?? createCodexContextProvider(config.context)).gather({ request: effectiveRequest, repositoryConfig }, { signal: options.signal });
+    response = await (dependencies.provider ?? createCodexContextProvider(config.context)).gather({ request: effectiveRequest, repositoryConfig, candidateContext: retrieval.text }, { signal: options.signal });
     phase = "assemble-source-pack";
     const built = await buildContextSourcePack({ contextId, workspaceRoot, manifest: response.manifest, resultByteBudget: budget.resultByteBudget });
     normalization = built.normalization;
@@ -56,6 +61,7 @@ async function gather(config: ResolvedConfig, request: ContextGatherRequest, dep
       ...base, durationMs: Date.now() - startedAt, ...(response.usage ? { providerUsage: response.usage } : {}), childCommandCalls: response.childToolCalls ?? 0,
       wrapUpPromptSent: response.wrapUpPromptSent ?? false,
       ...(response.wrapUpReason ? { wrapUpReason: response.wrapUpReason } : {}),
+      gortex: { durationMs: retrieval.durationMs, bytes: retrieval.bytes, rawBytes: retrieval.rawBytes, truncated: retrieval.truncated, command: retrieval.command, supplementedReferences: retrieval.supplementedReferences },
       ...limitTelemetry(resolved), ...budget, targetResultByteBudget: built.targetByteBudget, hardResultByteBudget: built.hardByteBudget,
       broadContext: built.broad, manifestValidation: built.normalization, sourceManifest: built.manifest,
       includedSources: built.includedSources, omittedSources: built.omittedSources, resultBytes: built.bytes,
@@ -69,6 +75,7 @@ async function gather(config: ResolvedConfig, request: ContextGatherRequest, dep
       failure: error instanceof Error ? error.message : String(error),
       ...(response?.usage ? { providerUsage: response.usage } : {}),
       ...(response ? { childCommandCalls: response.childToolCalls ?? 0, wrapUpPromptSent: response.wrapUpPromptSent ?? false, ...(response.wrapUpReason ? { wrapUpReason: response.wrapUpReason } : {}) } : {}),
+      ...(retrieval ? { gortex: { durationMs: retrieval.durationMs, bytes: retrieval.bytes, rawBytes: retrieval.rawBytes, truncated: retrieval.truncated, command: retrieval.command, supplementedReferences: retrieval.supplementedReferences } } : {}),
       ...(resolved ? limitTelemetry(resolved) : {}),
       ...(budget ?? {}),
       ...(normalization ? { manifestValidation: normalization } : {}),

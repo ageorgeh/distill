@@ -34,13 +34,19 @@ const DIRECT_ROLES = new Set<ContextFile["role"]>(["edit", "changed", "conflict"
 const bytes = (value: string) => Buffer.byteLength(value);
 
 async function resolveFile(root: string, candidate: string): Promise<ResolvedFile | undefined> {
-  const absolute = path.resolve(root, candidate);
-  const relative = path.relative(root, absolute);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return undefined;
-  try {
-    if (!(await stat(absolute)).isFile()) return undefined;
-    return { relative: relative.split(path.sep).join("/"), lines: (await readFile(absolute, "utf8")).split(/\r?\n/) };
-  } catch { return undefined; }
+  const normalized = candidate.split("\\").join("/");
+  const rootLabel = `${path.basename(root)}/`;
+  const attempts = [candidate, ...(normalized.startsWith(rootLabel) ? [normalized.slice(rootLabel.length)] : [])];
+  for (const attempt of attempts) {
+    const absolute = path.resolve(root, attempt);
+    const relative = path.relative(root, absolute);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) continue;
+    try {
+      if (!(await stat(absolute)).isFile()) continue;
+      return { relative: relative.split(path.sep).join("/"), lines: (await readFile(absolute, "utf8")).split(/\r?\n/) };
+    } catch { /* Try a Gortex repository-label prefix fallback when available. */ }
+  }
+  return undefined;
 }
 
 function mergeRanges(ranges: ContextExcerptRequest[]): ContextExcerptRequest[] {
