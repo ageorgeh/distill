@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { resolveConfig } from "../src/config";
@@ -10,7 +10,7 @@ import type { GortexContextProvider } from "../src/gortex-context";
 function retriever(counter?: { calls: number }): GortexContextProvider {
   return { gather: async () => {
     if (counter) counter.calls += 1;
-    return { text: "graph candidates", durationMs: 5, bytes: 16, rawBytes: 16, truncated: false, command: ["gortex", "explore"], supplementedReferences: [] };
+    return { text: "graph candidates", durationMs: 5, bytes: 16, rawBytes: 16, truncated: false, command: ["gortex", "explore"], supplementedReferences: [], documentationIndexes: [], deterministicEvidenceBytes: 0 };
   } };
 }
 
@@ -18,11 +18,10 @@ function provider(counter: { calls: number }): ContextAgentProvider {
   return { gather: async () => {
     counter.calls += 1;
     return {
-      usage: { inputTokens: 100, outputTokens: 20 }, childToolCalls: 3, wrapUpPromptSent: true, wrapUpReason: "time",
+      usage: { inputTokens: 100, outputTokens: 20 },
       manifest: {
         files: [{ path: "worker.ts", role: "edit", relevance: "Direct handler owner.", priority: 1, excerpts: [{ startLine: 1, endLine: 1, reason: "Entry point." }] }],
         searchesCompleted: [{ query: "worker", matches: ["worker.ts:1 — handler"] }],
-        validation: ["bun test"],
       },
     };
   } };
@@ -46,8 +45,8 @@ describe("single-response context gathering", () => {
       const files = await readdir(path.join(telemetry, "invocations"));
       const stored = JSON.parse(await readFile(path.join(telemetry, "invocations", files[0]!), "utf8")) as Record<string, unknown>;
       expect(stored).toMatchObject({
-        providerUsage: { inputTokens: 100, outputTokens: 20 }, childCommandCalls: 3, wrapUpPromptSent: true,
-        wrapUpReason: "time", broadContext: false, resultBytes: Buffer.byteLength(result),
+        providerUsage: { inputTokens: 100, outputTokens: 20 }, childCommandCalls: 0,
+        broadContext: false, resultBytes: Buffer.byteLength(result),
         gortex: { durationMs: 5, bytes: 16, rawBytes: 16, truncated: false, command: ["gortex", "explore"] },
       });
       expect(stored.sourceManifest).toBeDefined();
@@ -62,7 +61,7 @@ describe("single-response context gathering", () => {
       const durableProvider: ContextAgentProvider = { gather: async () => ({
         manifest: {
           files: [{ path: "task.md", role: "documentation", relevance: "Authoritative task reference.", priority: 2, excerpts: [{ startLine: 1, endLine: 260, reason: "Task contract." }] }],
-          searchesCompleted: [], validation: [],
+          searchesCompleted: [],
         },
       }) };
       const gather = createContextHandler(resolveConfig({}), { provider: durableProvider, retriever: retriever(), telemetryDirectory: telemetry, resolveLimit: async () => ({ limit: 24_000, source: "default" }) });
@@ -73,6 +72,33 @@ describe("single-response context gathering", () => {
       const stored = JSON.parse(await readFile(path.join(telemetry, "invocations", files[0]!), "utf8")) as Record<string, unknown>;
       expect(stored.manifestValidation).toEqual(["Split broad excerpt in task.md:1-260"]);
       expect(stored.omittedSources).toEqual([]);
+    } finally { await rm(root, { recursive: true, force: true }); await rm(telemetry, { recursive: true, force: true }); }
+  });
+
+  it("makes review Git locations mandatory retrieval seeds and passes documentation evidence", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "distill-context-review-"));
+    const telemetry = await mkdtemp(path.join(tmpdir(), "distill-context-review-telemetry-"));
+    try {
+      await mkdir(path.join(root, ".distill"));
+      await writeFile(path.join(root, ".distill", "config.toml"), "[context]\ndefault_base = \"dev\"\ndocumentation_indexes = [\"docs/llms.txt\"]\n", "utf8");
+      await writeFile(path.join(root, "worker.ts"), "export const worker = true;\n", "utf8");
+      let retrievalRequest: unknown;
+      let retrievalOptions: unknown;
+      const reviewRetriever: GortexContextProvider = { gather: async (request, options) => {
+        retrievalRequest = request;
+        retrievalOptions = options;
+        return { text: "review candidates", durationMs: 1, bytes: 17, rawBytes: 17, truncated: false, command: ["gortex", "explore"], supplementedReferences: ["worker.ts"], documentationIndexes: ["docs/llms.txt"], deterministicEvidenceBytes: 12 };
+      } };
+      const gather = createContextHandler(resolveConfig({}), {
+        provider: provider({ calls: 0 }),
+        retriever: reviewRetriever,
+        gitContext: { gather: async () => ({ references: ["worker.ts"], text: "review patch", commands: [["git", "diff"]], truncated: false }) },
+        telemetryDirectory: telemetry,
+        resolveLimit: async () => ({ limit: 24_000, source: "default" }),
+      });
+      await gather({ action: "gather", workspaceRoot: root, intent: "review", objective: "Review this branch.", references: ["Task 085"] });
+      expect(retrievalRequest).toMatchObject({ baseRef: "dev", references: ["Task 085", "worker.ts"] });
+      expect(retrievalOptions).toMatchObject({ documentationIndexes: ["docs/llms.txt"], deterministicEvidence: "review patch" });
     } finally { await rm(root, { recursive: true, force: true }); await rm(telemetry, { recursive: true, force: true }); }
   });
 

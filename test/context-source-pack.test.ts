@@ -9,7 +9,6 @@ function manifest(files: ContextManifest["files"]): ContextManifest {
   return parseContextManifest({
     files,
     searchesCompleted: [{ query: "worker", scope: "src", matches: ["worker.ts:1 — implementation owner"] }],
-    validation: ["bun test"],
   });
 }
 
@@ -88,6 +87,7 @@ describe("flat context source packs", () => {
   });
 
   it("uses a Codex-compatible strict JSON schema", () => {
+    expect((contextManifestJsonSchema.properties as Record<string, unknown>).validation).toBeUndefined();
     const visit = (value: unknown) => {
       if (!value || typeof value !== "object") return;
       const schema = value as { type?: unknown; properties?: Record<string, unknown>; required?: unknown; additionalProperties?: unknown };

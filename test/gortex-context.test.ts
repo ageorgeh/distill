@@ -16,10 +16,12 @@ function fakeChild() {
 }
 
 describe("Gortex context over-gather", () => {
-  it("runs one generous TOON explore and supplements explicit files omitted by the graph", async () => {
+  it("runs one generous TOON explore and always supplies bounded explicit files and documentation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "distill-gortex-"));
     try {
       await writeFile(path.join(root, "missing.ts"), "export function missing() {\n  return true;\n}\n", "utf8");
+      await writeFile(path.join(root, "present.ts"), "export const present = true;\n", "utf8");
+      await writeFile(path.join(root, "llms.txt"), "Repository architecture index.\n", "utf8");
       let executable = "";
       let args: string[] = [];
       let options: Record<string, unknown> = {};
@@ -44,15 +46,22 @@ describe("Gortex context over-gather", () => {
         intent: "implement",
         objective: "Fix queue behaviour.",
         references: ["missing.ts", "present.ts"],
-      });
+        inlineEvidence: "ExactQueueFailure: candidate clientId missing",
+      }, { documentationIndexes: ["llms.txt"], deterministicEvidence: "intent: review\nmandatory_seed_files:\n- present.ts" });
 
       expect(executable).toBe("custom-gortex");
       expect(args).toEqual(expect.arrayContaining(["explore", "--index", root, "--format", "toon", "--max-symbols", "100", "--no-progress"]));
       expect(args[1]).toContain("Explicit retrieval references:\n- missing.ts\n- present.ts");
+      expect(args[1]).toContain("Additional supplied evidence:\nExactQueueFailure: candidate clientId missing");
       expect(options).toMatchObject({ cwd: root, shell: false });
       expect(result.text).toContain("EXPLICIT REFERENCE SOURCE\nfile: missing.ts");
+      expect(result.text).toContain("EXPLICIT REFERENCE SOURCE\nfile: present.ts");
+      expect(result.text).toContain("DOCUMENTATION INDEX SOURCE\nfile: llms.txt");
+      expect(result.text).toContain("DETERMINISTIC GIT EVIDENCE");
       expect(result.text).toContain("1 | export function missing()");
-      expect(result.supplementedReferences).toEqual(["missing.ts"]);
+      expect(result.supplementedReferences).toEqual(["missing.ts", "present.ts"]);
+      expect(result.documentationIndexes).toEqual(["llms.txt"]);
+      expect(result.deterministicEvidenceBytes).toBeGreaterThan(0);
       expect(result.command).toEqual(["custom-gortex", ...args]);
       expect(result.truncated).toBe(false);
     } finally { await rm(root, { recursive: true, force: true }); }

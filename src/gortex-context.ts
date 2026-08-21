@@ -3,7 +3,11 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { ContextConfig, ContextGatherRequest } from "./config";
 
-const EXPLICIT_FILE_BYTE_LIMIT = 32_000;
+const EXPLICIT_FILE_BYTE_LIMIT = 12_000;
+const EXPLICIT_TOTAL_BYTE_LIMIT = 80_000;
+const DOCUMENTATION_FILE_BYTE_LIMIT = 20_000;
+const DOCUMENTATION_TOTAL_BYTE_LIMIT = 40_000;
+const INLINE_EVIDENCE_BYTE_LIMIT = 16_000;
 const DIAGNOSTIC_BYTE_LIMIT = 16_000;
 
 export interface GortexContextResult {
@@ -14,10 +18,18 @@ export interface GortexContextResult {
   truncated: boolean;
   command: string[];
   supplementedReferences: string[];
+  documentationIndexes: string[];
+  deterministicEvidenceBytes: number;
+}
+
+export interface GortexGatherOptions {
+  signal?: AbortSignal;
+  documentationIndexes?: string[];
+  deterministicEvidence?: string;
 }
 
 export interface GortexContextProvider {
-  gather(request: ContextGatherRequest, options?: { signal?: AbortSignal }): Promise<GortexContextResult>;
+  gather(request: ContextGatherRequest, options?: GortexGatherOptions): Promise<GortexContextResult>;
 }
 
 interface GortexDependencies {
@@ -27,8 +39,12 @@ interface GortexDependencies {
 }
 
 function retrievalTask(request: ContextGatherRequest): string {
-  if (!request.references?.length) return request.objective;
-  return `${request.objective}\n\nExplicit retrieval references:\n${request.references.map((reference) => `- ${reference}`).join("\n")}`;
+  const evidence = request.inlineEvidence ? Buffer.from(request.inlineEvidence).subarray(0, INLINE_EVIDENCE_BYTE_LIMIT).toString("utf8") : "";
+  return [
+    request.objective,
+    request.references?.length ? `Explicit retrieval references:\n${request.references.map((reference) => `- ${reference}`).join("\n")}` : "",
+    evidence ? `Additional supplied evidence:\n${evidence}${Buffer.byteLength(request.inlineEvidence ?? "") > INLINE_EVIDENCE_BYTE_LIMIT ? "\n[additional evidence truncated]" : ""}` : "",
+  ].filter(Boolean).join("\n\n");
 }
 
 function appendBounded(current: string, chunk: unknown, limit: number): string {
@@ -95,69 +111,101 @@ function normalizeReference(root: string, reference: string): { relative: string
   };
 }
 
-function structuredFilePresent(output: string, rootLabel: string, relative: string): boolean {
-  const paths = [relative, `${rootLabel}/${relative}`];
-  return paths.some((candidate) => output.includes(`file_path: ${candidate}`));
-}
-
-function numberedSource(source: string, requested?: { startLine: number; endLine: number }): string {
+function numberedSource(source: string, byteLimit: number, requested?: { startLine: number; endLine: number }): string {
   const lines = source.split(/\r?\n/);
   const start = requested ? Math.max(1, requested.startLine - 20) : 1;
   const end = requested ? Math.min(lines.length, requested.endLine + 80) : lines.length;
   const body = lines.slice(start - 1, end).map((line, index) => `${start + index} | ${line}`).join("\n");
-  const bounded = Buffer.from(body).subarray(0, EXPLICIT_FILE_BYTE_LIMIT).toString("utf8");
-  return `${bounded}${Buffer.byteLength(body) > EXPLICIT_FILE_BYTE_LIMIT ? "\n[explicit source truncated]" : ""}`;
+  const buffer = Buffer.from(body);
+  if (buffer.length <= byteLimit) return body;
+  const marker = "\n[exact source excerpt truncated]\n";
+  const available = Math.max(0, byteLimit - Buffer.byteLength(marker));
+  const headBytes = requested ? available : Math.floor(available * 0.7);
+  return `${buffer.subarray(0, headBytes).toString("utf8")}${marker}${requested ? "" : buffer.subarray(buffer.length - (available - headBytes)).toString("utf8")}`;
 }
 
 async function explicitSupplements(
   request: ContextGatherRequest,
-  gortexOutput: string,
   deps: Pick<GortexDependencies, "readFile" | "stat">,
 ): Promise<{ text: string; files: string[] }> {
-  const parts: string[] = [];
-  const files: string[] = [];
+  const sources: Array<{ relative: string; source: string; requested?: { startLine: number; endLine: number } }> = [];
   const seen = new Set<string>();
-  const rootLabel = path.basename(request.workspaceRoot);
   for (const reference of request.references ?? []) {
     const resolved = normalizeReference(request.workspaceRoot, reference);
-    if (!resolved || seen.has(resolved.relative) || structuredFilePresent(gortexOutput, rootLabel, resolved.relative)) continue;
+    if (!resolved || seen.has(resolved.relative)) continue;
     const absolute = path.join(request.workspaceRoot, resolved.relative);
     try {
       if (!(await deps.stat(absolute)).isFile()) continue;
       const source = await deps.readFile(absolute, "utf8");
-      parts.push(`EXPLICIT REFERENCE SOURCE\nfile: ${resolved.relative}\n${numberedSource(source, resolved.startLine && resolved.endLine ? { startLine: resolved.startLine, endLine: resolved.endLine } : undefined)}`);
-      files.push(resolved.relative);
+      sources.push({ relative: resolved.relative, source, ...(resolved.startLine && resolved.endLine ? { requested: { startLine: resolved.startLine, endLine: resolved.endLine } } : {}) });
       seen.add(resolved.relative);
     } catch { /* Non-file references remain useful retrieval terms but need no source supplement. */ }
   }
-  return { text: parts.join("\n\n"), files };
+  const perFileLimit = Math.min(EXPLICIT_FILE_BYTE_LIMIT, Math.max(512, Math.floor(EXPLICIT_TOTAL_BYTE_LIMIT / Math.max(1, sources.length))));
+  return {
+    text: sources.map((item) => `EXPLICIT REFERENCE SOURCE\nfile: ${item.relative}\n${numberedSource(item.source, perFileLimit, item.requested)}`).join("\n\n"),
+    files: sources.map((item) => item.relative),
+  };
 }
 
-function boundedCandidateContext(gortexOutput: string, supplement: string, references: string[], limit: number): { text: string; truncated: boolean } {
+async function documentationSources(
+  root: string,
+  indexes: string[],
+  deps: Pick<GortexDependencies, "readFile" | "stat">,
+): Promise<{ text: string; files: string[] }> {
+  const sources: Array<{ relative: string; source: string }> = [];
+  const seen = new Set<string>();
+  for (const index of indexes) {
+    const resolved = normalizeReference(root, index);
+    if (!resolved || seen.has(resolved.relative)) continue;
+    try {
+      const absolute = path.join(root, resolved.relative);
+      if (!(await deps.stat(absolute)).isFile()) continue;
+      sources.push({ relative: resolved.relative, source: await deps.readFile(absolute, "utf8") });
+      seen.add(resolved.relative);
+    } catch { /* Missing documentation indexes contribute no candidate evidence. */ }
+  }
+  const perFileLimit = Math.min(DOCUMENTATION_FILE_BYTE_LIMIT, Math.max(512, Math.floor(DOCUMENTATION_TOTAL_BYTE_LIMIT / Math.max(1, sources.length))));
+  return {
+    text: sources.map((item) => `DOCUMENTATION INDEX SOURCE\nfile: ${item.relative}\n${numberedSource(item.source, perFileLimit)}`).join("\n\n"),
+    files: sources.map((item) => item.relative),
+  };
+}
+
+function boundedText(input: string, limit: number, marker: string): { text: string; truncated: boolean } {
+  const buffer = Buffer.from(input);
+  if (buffer.length <= limit) return { text: input, truncated: false };
+  const separator = `\n\n[${marker}]\n\n`;
+  const available = Math.max(0, limit - Buffer.byteLength(separator));
+  const headBytes = Math.floor(available * 0.7);
+  return { text: `${buffer.subarray(0, headBytes).toString("utf8")}${separator}${buffer.subarray(buffer.length - (available - headBytes)).toString("utf8")}`, truncated: true };
+}
+
+function boundedCandidateContext(
+  gortexOutput: string,
+  supplement: string,
+  documentation: string,
+  deterministicEvidence: string,
+  references: string[],
+  limit: number,
+): { text: string; truncated: boolean } {
   const header = [
     "GORTEX OVER-GATHER (deterministic graph retrieval; candidate evidence, not conclusions)",
     references.length ? `EXPLICIT REFERENCES (always consider these even if graph ranking omitted them)\n${references.map((reference) => `- ${reference}`).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
-  const sourceHeader = supplement ? "\n\nEXPLICIT REFERENCE SUPPLEMENTS\n" : "";
-  const graphHeader = "\n\nGORTEX TOON OUTPUT\n";
-  const fixedBytes = Buffer.byteLength(header) + Buffer.byteLength(sourceHeader) + Buffer.byteLength(graphHeader);
+  const evidenceInput = [
+    supplement ? `EXPLICIT REFERENCE SOURCES\n${supplement}` : "",
+    deterministicEvidence ? `DETERMINISTIC GIT EVIDENCE\n${deterministicEvidence}` : "",
+    documentation ? `REPOSITORY DOCUMENTATION INDEXES\n${documentation}` : "",
+  ].filter(Boolean).join("\n\n");
+  const fixedBytes = Buffer.byteLength(header) + Buffer.byteLength("GORTEX TOON OUTPUT") + (evidenceInput ? 6 : 4);
   const allowance = Math.max(0, limit - fixedBytes);
-  const supplementBuffer = Buffer.from(supplement);
-  const supplementAllowance = Math.min(supplementBuffer.length, Math.floor(allowance * 0.45));
-  const boundedSupplement = supplementBuffer.subarray(0, supplementAllowance).toString("utf8");
-  const supplementTruncated = supplementBuffer.length > supplementAllowance;
-  const graphAllowance = allowance - Buffer.byteLength(boundedSupplement);
-  if (Buffer.byteLength(gortexOutput) <= graphAllowance) {
-    const text = `${header}${sourceHeader}${boundedSupplement}${graphHeader}${gortexOutput}`;
-    return { text: Buffer.from(text).subarray(0, limit).toString("utf8"), truncated: supplementTruncated };
-  }
-  const marker = "\n\n[Gortex output middle omitted to honor the candidate-context budget]\n\n";
-  const available = Math.max(0, graphAllowance - Buffer.byteLength(marker));
-  const headBytes = Math.floor(available * 0.7);
-  const buffer = Buffer.from(gortexOutput);
-  const selected = `${buffer.subarray(0, headBytes).toString("utf8")}${marker}${buffer.subarray(buffer.length - (available - headBytes)).toString("utf8")}`;
-  const text = `${header}${sourceHeader}${boundedSupplement}${graphHeader}${selected}`;
-  return { text: Buffer.from(text).subarray(0, limit).toString("utf8"), truncated: true };
+  const graphReserve = Math.min(Buffer.byteLength(gortexOutput), Math.max(40_000, Math.floor(allowance * 0.35)));
+  const evidence = boundedText(evidenceInput, Math.max(0, allowance - graphReserve), "deterministic candidate evidence omitted to honor the context budget");
+  const graphAllowance = Math.max(0, allowance - Buffer.byteLength(evidence.text));
+  const graph = boundedText(gortexOutput, graphAllowance, "Gortex output middle omitted to honor the candidate-context budget");
+  const text = [header, evidence.text, "GORTEX TOON OUTPUT", graph.text].filter(Boolean).join("\n\n");
+  return { text: Buffer.from(text).subarray(0, limit).toString("utf8"), truncated: evidence.truncated || graph.truncated || Buffer.byteLength(text) > limit };
 }
 
 export function createGortexContextProvider(config: ContextConfig, dependencies: Partial<GortexDependencies> = {}): GortexContextProvider {
@@ -168,8 +216,12 @@ export function createGortexContextProvider(config: ContextConfig, dependencies:
       const args = ["explore", task, "--index", request.workspaceRoot, "--format", "toon", "--max-symbols", String(config.gortexMaxSymbols), "--no-progress"];
       const startedAt = Date.now();
       const result = await runGortex(config.gortexCommand, args, request.workspaceRoot, config.gortexTimeoutMs, options?.signal, deps.spawn);
-      const supplements = await explicitSupplements(request, result.stdout, deps);
-      const bounded = boundedCandidateContext(result.stdout, supplements.text, request.references ?? [], config.gortexMaxOutputBytes);
+      const [supplements, documentation] = await Promise.all([
+        explicitSupplements(request, deps),
+        documentationSources(request.workspaceRoot, options?.documentationIndexes ?? [], deps),
+      ]);
+      const deterministicEvidence = options?.deterministicEvidence ?? "";
+      const bounded = boundedCandidateContext(result.stdout, supplements.text, documentation.text, deterministicEvidence, request.references ?? [], config.gortexMaxOutputBytes);
       return {
         text: bounded.text,
         durationMs: Date.now() - startedAt,
@@ -178,6 +230,8 @@ export function createGortexContextProvider(config: ContextConfig, dependencies:
         truncated: bounded.truncated,
         command: [config.gortexCommand, ...args],
         supplementedReferences: supplements.files,
+        documentationIndexes: documentation.files,
+        deterministicEvidenceBytes: Buffer.byteLength(deterministicEvidence),
       };
     },
   };

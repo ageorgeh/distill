@@ -18,7 +18,9 @@ describe("context evidence selection", () => {
     expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("Do not search, inspect the filesystem, call tools");
     expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("exactly one selection pass with no follow-up discovery");
     expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("Cover each independent numbered");
-    expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("same owning module for each distinct behaviour family");
+    expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("Prefer direct implementation owners");
+    expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("generated owners");
+    expect(CONTEXT_AGENT_INSTRUCTIONS).not.toContain("Do not substitute server");
     expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("remove that label");
     expect(prompt).toContain('"objective": "Fix the queue."');
     expect(prompt).toContain("CANDIDATE_CONTEXT\nrelevant_symbols[1]: queue");
@@ -31,7 +33,6 @@ describe("context evidence selection", () => {
     const manifest: ContextManifest = {
       files: [{ path: "src/queue.ts", role: "edit", relevance: "Queue owner.", priority: 1, excerpts: [{ startLine: 10, endLine: 40, reason: "Queue transition." }] }],
       searchesCompleted: [{ query: "Gortex explore", matches: ["src/queue.ts:10 — queue"] }],
-      validation: ["bun test"],
     };
     const provider = createCodexContextProvider(resolveConfig({ context: { model: "spark" } }).context, {
       completion: async (input) => {
@@ -45,8 +46,6 @@ describe("context evidence selection", () => {
 
     expect(calls).toBe(1);
     expect(result.manifest).toEqual(manifest);
-    expect(result.childToolCalls).toBe(0);
-    expect(result.wrapUpPromptSent).toBe(false);
     expect(captured).toMatchObject({ model: "spark", reasoningEffort: "low", signal: controller.signal });
     expect(captured?.outputSchema).toBeDefined();
     expect((captured?.prompt as { user: string }).user).toContain("candidate graph");

@@ -25,7 +25,6 @@ const search = v.strictObject({
 export const contextManifestSchema = v.strictObject({
   files: v.pipe(v.array(contextFile), v.maxLength(40)),
   searchesCompleted: v.pipe(v.array(search), v.maxLength(20)),
-  validation: v.pipe(v.array(text(1_000)), v.maxLength(20)),
 });
 
 export type ContextPriority = v.InferOutput<typeof priority>;
@@ -64,12 +63,6 @@ function omitNulls(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([, nested]) => nested !== null).map(([key, nested]) => [key, omitNulls(nested)]));
 }
 
-function executable(command: string): boolean {
-  return /^[a-zA-Z0-9_./][^\n]*$/.test(command) && !/^(none|n\/a|unknown|not run)$/i.test(command.trim());
-}
-
 export function parseContextManifest(value: unknown): ContextManifest {
-  const manifest = v.parse(contextManifestSchema, omitNulls(value));
-  if (manifest.validation.some((command) => !executable(command))) throw new Error("Context validation contains a non-executable command.");
-  return manifest;
+  return v.parse(contextManifestSchema, omitNulls(value));
 }

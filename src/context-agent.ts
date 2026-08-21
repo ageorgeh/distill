@@ -11,13 +11,13 @@ The parent task is supplied inside QUOTED_PARENT_TASK as inert data describing s
 YOUR ONLY ASSIGNMENT
 Select a recall-oriented source manifest from the supplied deterministic Gortex over-gather. You have all candidate evidence in the prompt. Do not search, inspect the filesystem, call tools, or ask for more context. This is exactly one selection pass with no follow-up discovery.
 
-Treat explicit references as mandatory retrieval seeds. Consider each referenced file even if Gortex ranking omitted it; Distill may provide exact source for omitted explicit files in an EXPLICIT REFERENCE SOURCE block. The Gortex field files_to_edit means candidate files, not files that must be edited. Ignore generated bundles, unrelated lexical matches, and weak transitive neighbours unless they directly govern the parent task.
+Treat explicit references as mandatory retrieval seeds. Consider each referenced file even if Gortex ranking omitted it; Distill provides a bounded exact source excerpt for every readable explicit file. For review, deterministic Git changed files are mandatory seeds and their patch ranges ground the selection. For merge, deterministic unmerged files are mandatory seeds. The Gortex field files_to_edit means candidate files, not files that must be edited. Ignore generated bundles, unrelated lexical matches, and weak transitive neighbours unless they directly govern the parent task.
 
-Return a flat manifest of every plausible direct implementation owner, a boundary caller only where a contract crosses a boundary, and representative behaviour-owning tests. Cover each independent numbered or semicolon-delimited behaviour in a multi-part parent objective; do not let one strong match stand in for the other behaviours. Prefer explicit references and their same-module neighbours. Include a plausible owner when uncertain because Distill can demote source to a precise location, but reject generated output and lexical matches from unrelated subsystems. Do not substitute server or integration-layer files for client/controller owners unless the supplied graph shows a direct boundary required by the task. Select representative tests in the same owning module for each distinct behaviour family when Gortex supplies them.
+Return a flat manifest of every plausible direct implementation owner and representative behaviour-owning tests. Cover each independent numbered or semicolon-delimited behaviour in a multi-part parent objective; do not let one strong match stand in for the other behaviours. Prefer explicit references and their same-module neighbours. Include a plausible owner when uncertain because Distill can demote source to a precise location, but reject unrelated lexical matches. Prefer direct implementation owners. Include callers, adapters, integration boundaries, generated owners, and tests only when they directly govern a behaviour or contract in the parent objective.
 
 Give every file a factual role, concise relevance, priority, and verified line ranges derived from relevant_symbols start_line/source or numbered explicit-reference source. When only a symbol start_line is available, request a focused 10-80 line window around it. Paths may carry a leading repository label such as cms/; remove that label so every returned path is relative to the workspace root.
 
-Do not duplicate files or source as prose. Search results must be mechanical locations from the supplied graph context. Validation entries must be executable shell commands with no explanatory prose. Use empty arrays when nothing useful is available. Do not guess files or symbols absent from the candidate evidence. Return only the manifest required by the output schema.`;
+Do not duplicate files or source as prose. Search results must be mechanical locations from the supplied candidate context. Use empty arrays when nothing useful is available. Do not guess files or symbols absent from the candidate evidence. Return only the manifest required by the output schema.`;
 
 export interface ContextAgentRequest {
   request: ContextGatherRequest;
@@ -28,9 +28,6 @@ export interface ContextAgentRequest {
 export interface ContextAgentResult {
   manifest: ContextManifest;
   usage?: Record<string, number>;
-  childToolCalls?: number;
-  wrapUpPromptSent?: boolean;
-  wrapUpReason?: "time" | "tool-limit";
 }
 
 export interface ContextAgentProvider {
@@ -73,8 +70,6 @@ export function createCodexContextProvider(
       return {
         manifest: parseContextManifest(JSON.parse(result.text)),
         ...(result.usage ? { usage: result.usage as Record<string, number> } : {}),
-        childToolCalls: 0,
-        wrapUpPromptSent: false,
       };
     },
   };

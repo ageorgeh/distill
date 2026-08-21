@@ -136,7 +136,6 @@ function boundedMetadata(manifest: ContextManifest, allowance: number): string[]
   });
   if (fileLines.length) add(`FILES LOCATED\n${fileLines.join("\n")}`);
   for (const search of manifest.searchesCompleted) add(`SEARCH COMPLETED\n${search.query}${search.scope ? ` under ${search.scope}` : ""}\n${search.matches.map((match) => `- ${match}`).join("\n")}`);
-  if (manifest.validation.length) add(`VALIDATE\n${manifest.validation.join("\n")}`);
   return parts;
 }
 

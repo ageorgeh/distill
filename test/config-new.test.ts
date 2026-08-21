@@ -9,12 +9,9 @@ import { resolveTelemetryDirectory } from "../src/telemetry";
 
 describe("new configuration", () => {
   it("resolves separate output and context settings", () => {
-    const config = resolveConfig({ output: { provider: "external", model: "small", host: "http://example.test/" }, context: { model: "spark", childToolOutputTokenLimit: 9000, maxChildToolCalls: 25, gortexCommand: "custom-gortex", gortexMaxSymbols: 120, gortexMaxOutputBytes: 180_000 } });
+    const config = resolveConfig({ output: { provider: "external", model: "small", host: "http://example.test/" }, context: { model: "spark", gortexCommand: "custom-gortex", gortexMaxSymbols: 120, gortexMaxOutputBytes: 180_000 } });
     expect(config.output).toMatchObject({ provider: "external", model: "small", host: "http://example.test" });
-    expect(config.context).toMatchObject({ provider: "codex", model: "spark", childToolOutputTokenLimit: 9000, maxChildToolCalls: 25, gortexCommand: "custom-gortex", gortexMaxSymbols: 120, gortexMaxOutputBytes: 180_000, gortexTimeoutMs: 30_000 });
-    expect(config.context.wrapUpAfterMs).toBe(45_000);
-    expect(resolveConfig({ context: { timeoutMs: 60_000 } }).context.wrapUpAfterMs).toBe(40_000);
-    expect(() => resolveConfig({ context: { timeoutMs: 90_000, wrapUpAfterMs: 90_000 } })).toThrow("context.wrapUpAfterMs must be less than context.timeoutMs");
+    expect(config.context).toMatchObject({ provider: "codex", model: "spark", gortexCommand: "custom-gortex", gortexMaxSymbols: 120, gortexMaxOutputBytes: 180_000, gortexTimeoutMs: 30_000 });
   });
 
   it("parses the new CLI commands", () => {

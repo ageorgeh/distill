@@ -6,11 +6,8 @@ export const DEFAULT_CODEX_COMMAND = "codex";
 export const DEFAULT_HOST = "http://127.0.0.1:11434/v1";
 export const DEFAULT_TIMEOUT_MS = 180_000;
 export const DEFAULT_CONTEXT_TIMEOUT_MS = 90_000;
-export const DEFAULT_CONTEXT_WRAP_UP_AFTER_MS = 45_000;
 export const DEFAULT_SMALL_OUTPUT_BYTES = 2_000;
 export const DEFAULT_PARENT_TOOL_OUTPUT_LIMIT = 2_500;
-export const DEFAULT_CONTEXT_CHILD_TOOL_OUTPUT_LIMIT = 2_000;
-export const DEFAULT_CONTEXT_MAX_CHILD_TOOL_CALLS = 30;
 export const DEFAULT_GORTEX_COMMAND = "gortex";
 export const DEFAULT_GORTEX_TIMEOUT_MS = 30_000;
 export const DEFAULT_GORTEX_MAX_SYMBOLS = 100;
@@ -49,9 +46,6 @@ export interface ContextConfig {
   codexCommand: string;
   reasoningEffort: string;
   timeoutMs: number;
-  wrapUpAfterMs: number;
-  childToolOutputTokenLimit: number;
-  maxChildToolCalls: number;
   gortexCommand: string;
   gortexTimeoutMs: number;
   gortexMaxSymbols: number;
@@ -154,19 +148,12 @@ export function resolveConfig(config: DistillConfig = {}): ResolvedConfig {
   const rawContext = config.context ?? {};
   if (rawContext.provider !== undefined && rawContext.provider !== "codex") throw new UsageError("context.provider must be codex.");
   const contextTimeoutMs = positive(rawContext.timeoutMs, DEFAULT_CONTEXT_TIMEOUT_MS, "context.timeoutMs");
-  const wrapUpAfterMs = rawContext.wrapUpAfterMs === undefined
-    ? Math.max(1, Math.min(DEFAULT_CONTEXT_WRAP_UP_AFTER_MS, Math.floor(contextTimeoutMs * 2 / 3)))
-    : positive(rawContext.wrapUpAfterMs, DEFAULT_CONTEXT_WRAP_UP_AFTER_MS, "context.wrapUpAfterMs");
-  if (wrapUpAfterMs >= contextTimeoutMs) throw new UsageError("context.wrapUpAfterMs must be less than context.timeoutMs.");
   const context: ContextConfig = {
     provider: "codex",
     model: text(rawContext.model, DEFAULT_CODEX_MODEL, "context.model"),
     codexCommand: text(rawContext.codexCommand, DEFAULT_CODEX_COMMAND, "context.codexCommand"),
     reasoningEffort: text(rawContext.reasoningEffort, "low", "context.reasoningEffort"),
     timeoutMs: contextTimeoutMs,
-    wrapUpAfterMs,
-    childToolOutputTokenLimit: positive(rawContext.childToolOutputTokenLimit, DEFAULT_CONTEXT_CHILD_TOOL_OUTPUT_LIMIT, "context.childToolOutputTokenLimit"),
-    maxChildToolCalls: positive(rawContext.maxChildToolCalls, DEFAULT_CONTEXT_MAX_CHILD_TOOL_CALLS, "context.maxChildToolCalls"),
     gortexCommand: text(rawContext.gortexCommand, DEFAULT_GORTEX_COMMAND, "context.gortexCommand"),
     gortexTimeoutMs: positive(rawContext.gortexTimeoutMs, DEFAULT_GORTEX_TIMEOUT_MS, "context.gortexTimeoutMs"),
     gortexMaxSymbols: positive(rawContext.gortexMaxSymbols, DEFAULT_GORTEX_MAX_SYMBOLS, "context.gortexMaxSymbols"),

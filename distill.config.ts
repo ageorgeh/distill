@@ -14,9 +14,6 @@ export default {
     codexCommand: "codex",
     reasoningEffort: "low",
     timeoutMs: 90_000,
-    wrapUpAfterMs: 45_000,
-    childToolOutputTokenLimit: 2_000,
-    maxChildToolCalls: 30,
   },
   telemetry: { directory: ".telemetry" },
 } satisfies DistillConfig;
