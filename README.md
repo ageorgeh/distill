@@ -37,19 +37,21 @@ import type { DistillConfig } from "./src/config";
 
 export default {
   output: { provider: "codex", model: "gpt-5.3-codex-spark", codexCommand: "codex", timeoutMs: 180_000, smallOutputBytes: 2_000 },
-  context: { provider: "codex", model: "gpt-5.3-codex-spark", codexCommand: "codex", reasoningEffort: "low", timeoutMs: 90_000, gortexCommand: "gortex", gortexTimeoutMs: 30_000, gortexMaxSymbols: 100, gortexMaxOutputBytes: 200_000 },
+  context: { provider: "codex", model: "gpt-5.3-codex-spark", codexCommand: "codex", reasoningEffort: "low", timeoutMs: 90_000, gortexCommand: "gortex", gortexTimeoutMs: 60_000, gortexMaxSymbols: 100, gortexMaxOutputBytes: 200_000 },
   telemetry: { directory: ".telemetry" },
 } satisfies DistillConfig;
 ```
 
-The supplied context objective is quoted as the parent agent's task. Gortex performs deterministic over-gathering with no LLM provider; Spark receives the result as inert candidate evidence and performs one tool-disabled manifest-selection inference rather than a repository-discovery loop. `gortexMaxSymbols` defaults to 100, `gortexMaxOutputBytes` defaults to 200,000 bytes (about 50,000 tokens), `gortexTimeoutMs` defaults to 30 seconds, and `timeoutMs` is Spark's hard deadline. `gortexCommand` may select a non-standard CLI path.
+The supplied context objective is quoted as the parent agent's task. Gortex performs deterministic over-gathering with no LLM provider; Spark receives the result as inert candidate evidence and performs one tool-disabled manifest-selection inference rather than a repository-discovery loop. `gortexMaxSymbols` defaults to 100, `gortexMaxOutputBytes` defaults to 200,000 bytes (about 50,000 tokens), `gortexTimeoutMs` defaults to 60 seconds, and `timeoutMs` is Spark's hard deadline. `gortexCommand` may select a non-standard CLI path.
+
+Choose `implement` when code or configuration will change, and `advise` for read-only investigation, diagnosis, or explanation of existing behavior. Choose `review` only when the actual base-to-HEAD branch or PR changeset is the subject, and `merge` only when unmerged conflicts are the subject. Review bases are resolved locally without fetching; configure a current remote-tracking ref such as `origin/dev` instead of a potentially stale local branch.
 
 Repositories may add `.distill/config.toml`:
 
 ```toml
 [context]
 documentation_indexes = ["packages/modules/base/docs/llms.txt"]
-default_base = "dev"
+default_base = "origin/dev"
 ```
 
 Global and repository `AGENTS.md` instructions should require capable agents to read authoritative tasks before `context` gather, treat its exact source as their initial read pass, and avoid repeating that discovery. This machine's global instructions and CMS root instructions follow that workflow.
