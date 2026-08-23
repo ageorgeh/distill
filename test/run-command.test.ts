@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { resolveConfig } from "../src/config";
-import { createRunHandler, resolveCommandEnvironment, resolveCommandShell } from "../src/run-command";
+import { createRunHandler, resolveCommandEnvironment, resolveCommandShell, RUN_SUMMARY_MAX_BYTES, RUN_SUMMARY_TARGET_BYTES } from "../src/run-command";
 
 describe("run", () => {
   it("uses a login shell while preserving the complete inherited environment", async () => {
@@ -40,8 +40,8 @@ describe("run", () => {
     const telemetry = await mkdtemp(path.join(tmpdir(), "distill-run-telemetry-"));
     try {
       const run = createRunHandler(resolveConfig({}), { telemetryDirectory: telemetry });
-      expect(await run({ workspaceRoot: process.cwd(), command: "true" })).toBe("COMMAND PASS exit=0 output=empty");
-      expect(await run({ workspaceRoot: process.cwd(), command: "sh -c 'echo broken >&2; exit 2'" })).toBe("COMMAND FAIL exit=2 distilled=no reason=small-output\nbroken\n");
+      expect(await run({ workspaceRoot: process.cwd(), command: "true" })).toBe("PASS exit=0");
+      expect(await run({ workspaceRoot: process.cwd(), command: "sh -c 'echo broken >&2; exit 2'" })).toBe("FAIL exit=2\nbroken\n");
       const files = await (await import("node:fs/promises")).readdir(path.join(telemetry, "invocations"));
       const stored = await readFile(path.join(telemetry, "invocations", files[0]!), "utf8");
       expect(stored).not.toContain('"stderr": "broken');
@@ -51,9 +51,27 @@ describe("run", () => {
   it("uses a provider only for large output and bounds provider failures", async () => {
     const config = resolveConfig({ output: { smallOutputBytes: 10 } });
     const request = { workspaceRoot: process.cwd(), command: "yes x | head -n 50" };
-    expect(await createRunHandler(config, { provider: { summarize: async () => ({ text: "compressed", durationMs: 2 }) } })(request)).toContain("distilled=yes\ncompressed");
+    let targetOutputBytes = 0; let maxOutputBytes = 0;
+    const compressed = await createRunHandler(config, { provider: { summarize: async (summaryRequest) => {
+      targetOutputBytes = summaryRequest.targetOutputBytes; maxOutputBytes = summaryRequest.maxOutputBytes;
+      return { text: "tests pass total=50", durationMs: 2 };
+    } } })(request);
+    expect(compressed).toBe("PASS exit=0\ntests pass total=50");
+    expect(targetOutputBytes).toBe(RUN_SUMMARY_TARGET_BYTES);
+    expect(maxOutputBytes).toBeLessThanOrEqual(RUN_SUMMARY_MAX_BYTES);
     const output = await createRunHandler(config, { provider: { summarize: async () => { throw new Error("offline"); } }, resolveLimit: async () => 100 })(request);
-    expect(output).toContain("reason=provider-error");
-    expect(Buffer.byteLength(output)).toBeLessThan(320);
+    expect(output).toStartWith("PASS exit=0 provider-error\n");
+    expect(Buffer.byteLength(output)).toBeLessThanOrEqual(320);
+  });
+
+  it("marks output truncated while preserving whole diagnostic lines", async () => {
+    const config = resolveConfig({ output: { smallOutputBytes: 10 } });
+    const output = await createRunHandler(config, {
+      provider: { summarize: async () => ({ text: "diagnostic line\n".repeat(1_000), durationMs: 2 }) },
+      resolveLimit: async () => 2_500,
+    })({ workspaceRoot: process.cwd(), command: "yes x | head -n 50" });
+    expect(output).toStartWith("PASS exit=0 truncated\n");
+    expect(output).toEndWith("[additional diagnostics omitted to fit parent tool-output budget]");
+    expect(Buffer.byteLength(output)).toBeLessThanOrEqual(8_000);
   });
 });

@@ -577,13 +577,13 @@ Unix execution support is required. Use the current platform shell without build
 Successful command:
 
 ```text
-COMMAND PASS exit=0 output=empty
+PASS exit=0
 ```
 
 Failed command:
 
 ```text
-COMMAND FAIL exit=1 output=empty
+FAIL exit=1
 ```
 
 This must solve silent successful commands such as linting or formatting checks without requiring the capable agent to rerun them.
@@ -601,14 +601,14 @@ When combined stdout and stderr are at or below the threshold, do not invoke a m
 Return exact output with deterministic status:
 
 ```text
-COMMAND PASS exit=0 distilled=no reason=small-output
+PASS exit=0
 <raw output>
 ```
 
 or:
 
 ```text
-COMMAND FAIL exit=1 distilled=no reason=small-output
+FAIL exit=1
 <raw output>
 ```
 
@@ -627,11 +627,11 @@ The model receives:
 Distill, not the model, adds the final deterministic status header:
 
 ```text
-COMMAND FAIL exit=1 distilled=yes
+FAIL exit=1
 <compressed actionable output>
 ```
 
-The model must not be trusted to infer or report the exit code.
+The model must not be trusted to infer or report the exit code. Its result is a compact plain-text line protocol without Markdown, emoji, conversational framing, or duplicated status. Ordinary summaries target 2,000 bytes and have an 8,000-byte hard maximum for independent actionable failures. Codex output compression uses low reasoning effort.
 
 ### Provider failure
 
@@ -641,14 +641,13 @@ Return a bounded deterministic extract containing:
 
 - command status;
 - exit code;
-- `distilled=no`;
-- `reason=provider-error`;
+- `provider-error`;
 - a useful head/tail sample of the raw output within the result budget.
 
 Example:
 
 ```text
-COMMAND FAIL exit=1 distilled=no reason=provider-error
+FAIL exit=1 provider-error
 [output head]
 ...
 [output tail]
@@ -1144,7 +1143,7 @@ Also perform a manual MCP smoke test with a fake or controlled repository:
 3. Confirm the packet fits the configured tool-output limit.
 4. Confirm the task text is digested rather than repeated.
 5. Call `run` with a silent successful command.
-6. Confirm it returns `COMMAND PASS exit=0 output=empty`.
+6. Confirm it returns `PASS exit=0`.
 7. Call `run` with a failing command producing large output.
 8. Confirm the result is bounded and contains the deterministic exit status.
 9. Confirm telemetry files are written without raw command output or full inline evidence.

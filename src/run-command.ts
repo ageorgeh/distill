@@ -6,7 +6,10 @@ import { resolveToolOutputTokenLimit, resultBudget, type ResolvedToolOutputLimit
 import { createOutputProvider, type OutputProvider } from "./llm";
 import { resolveTelemetryDirectory, telemetryId, writeTelemetry } from "./telemetry";
 
-export const DEFAULT_RUN_QUESTION = "Report whether the command succeeded. If it failed, include actionable root causes, relevant paths, line numbers, test names, and error messages. Omit successful noise.";
+export const DEFAULT_RUN_QUESTION = "If the command failed, report actionable root causes, relevant paths, line numbers, test names, and error messages. For requested checks, report compact pass, fail, or skipped totals. Omit successful detail.";
+export const RUN_SUMMARY_TARGET_BYTES = 2_000;
+export const RUN_SUMMARY_MAX_BYTES = 8_000;
+const RUN_ENVELOPE_RESERVE_BYTES = 96;
 interface CapturedCommand { stdout: string; stderr: string; exitCode: number | null; terminationError?: string; }
 type ResolveLimit = () => Promise<ResolvedToolOutputLimit | number>;
 
@@ -65,6 +68,23 @@ function normalizeLimit(value: ResolvedToolOutputLimit | number): ResolvedToolOu
   return typeof value === "number" ? { limit: value, source: "default" } : value;
 }
 
+function resultHeader(status: "PASS" | "FAIL", captured: CapturedCommand, exceptional?: "provider-error" | "execution-error"): string {
+  const flags = [
+    ...(captured.terminationError?.startsWith("Command timed out") ? ["timeout"] : []),
+    ...(exceptional ? [exceptional] : []),
+  ];
+  return `${status} exit=${captured.exitCode ?? "null"}${flags.length ? ` ${flags.join(" ")}` : ""}`;
+}
+
+function renderResult(header: string, payload: string, maxBytes: number): { text: string; capped: boolean } {
+  const value = payload ? `${header}\n${payload}` : header;
+  if (Buffer.byteLength(value) <= maxBytes) return { text: value, capped: false };
+  const truncatedHeader = `${header} truncated`;
+  const payloadBudget = Math.max(128, maxBytes - Buffer.byteLength(truncatedHeader) - 1);
+  const bounded = boundResult(payload, payloadBudget);
+  return { text: `${truncatedHeader}\n${bounded.text}`, capped: true };
+}
+
 export function createRunHandler(config: ResolvedConfig, dependencies: { provider?: OutputProvider; resolveLimit?: ResolveLimit; telemetryDirectory?: string } = {}) {
   return async (request: RunRequest): Promise<string> => {
     const id = telemetryId(); const startedAt = Date.now(); let captured: CapturedCommand = { stdout: "", stderr: "", exitCode: null };
@@ -74,19 +94,22 @@ export function createRunHandler(config: ResolvedConfig, dependencies: { provide
       const workspaceRoot = await realpath(request.workspaceRoot);
       const resolved = normalizeLimit(await (dependencies.resolveLimit ?? resolveToolOutputTokenLimit)());
       const budget = resultBudget(resolved);
+      const responseByteBudget = Math.min(budget.resultByteBudget, RUN_SUMMARY_MAX_BYTES + RUN_ENVELOPE_RESERVE_BYTES);
+      const summaryMaxBytes = Math.max(128, responseByteBudget - RUN_ENVELOPE_RESERVE_BYTES);
+      const summaryTargetBytes = Math.min(RUN_SUMMARY_TARGET_BYTES, summaryMaxBytes);
       const commandStartedAt = Date.now(); captured = await execute(request.command, workspaceRoot, config.output.timeoutMs); const commandDurationMs = Date.now() - commandStartedAt;
       const combined = `${captured.stdout}${captured.stderr}${captured.terminationError ? `\n${captured.terminationError}` : ""}`;
       const status = captured.exitCode === 0 ? "PASS" : "FAIL";
-      let result: string; let distilled = false; let fallbackReason: string | undefined; let providerDurationMs: number | undefined; let providerUsage: unknown;
-      if (!combined) result = `COMMAND ${status} exit=${captured.exitCode ?? "null"} output=empty`;
-      else if (Buffer.byteLength(combined) <= config.output.smallOutputBytes) result = `COMMAND ${status} exit=${captured.exitCode ?? "null"} distilled=no reason=small-output\n${combined}`;
+      let header = resultHeader(status, captured); let payload = ""; let distilled = false; let fallbackReason: string | undefined; let providerDurationMs: number | undefined; let providerUsage: unknown;
+      if (!combined) payload = "";
+      else if (Buffer.byteLength(combined) <= config.output.smallOutputBytes) payload = combined;
       else {
         try {
-          const summary = await (dependencies.provider ?? createOutputProvider(config.output)).summarize({ command: request.command, question: request.question ?? DEFAULT_RUN_QUESTION, exitCode: captured.exitCode, stdout: captured.stdout, stderr: captured.stderr, maxOutputBytes: Math.max(128, budget.resultByteBudget - 80) });
-          result = `COMMAND ${status} exit=${captured.exitCode ?? "null"} distilled=yes\n${summary.text}`; distilled = true; providerDurationMs = summary.durationMs; providerUsage = summary.usage;
-        } catch { result = `COMMAND ${status} exit=${captured.exitCode ?? "null"} distilled=no reason=provider-error\n${combined}`; fallbackReason = "provider-error"; }
+          const summary = await (dependencies.provider ?? createOutputProvider(config.output)).summarize({ command: request.command, question: request.question ?? DEFAULT_RUN_QUESTION, exitCode: captured.exitCode, stdout: captured.stdout, stderr: captured.stderr, targetOutputBytes: summaryTargetBytes, maxOutputBytes: summaryMaxBytes });
+          payload = summary.text; distilled = true; providerDurationMs = summary.durationMs; providerUsage = summary.usage;
+        } catch { header = resultHeader(status, captured, "provider-error"); payload = combined; fallbackReason = "provider-error"; }
       }
-      const bounded = boundResult(result, budget.resultByteBudget);
+      const bounded = renderResult(header, payload, responseByteBudget);
       await writeTelemetry(resolveTelemetryDirectory(config.telemetry.directory, dependencies.telemetryDirectory), id, {
         ...base, durationMs: Date.now() - startedAt, commandDurationMs, ...(providerDurationMs !== undefined ? { providerDurationMs } : {}), ...(providerUsage ? { providerUsage } : {}),
         resolvedToolOutputTokenLimit: resolved.limit, toolOutputLimitSource: resolved.source, ...(resolved.configPath ? { toolOutputConfigPath: resolved.configPath } : {}), ...budget,
@@ -95,7 +118,7 @@ export function createRunHandler(config: ResolvedConfig, dependencies: { provide
       });
       return bounded.text;
     } catch (error) {
-      const result = `COMMAND FAIL exit=${captured.exitCode ?? "null"} distilled=no reason=execution-error\n${error instanceof Error ? error.message : String(error)}`;
+      const result = `${resultHeader("FAIL", captured, "execution-error")}\n${error instanceof Error ? error.message : String(error)}`;
       await writeTelemetry(resolveTelemetryDirectory(config.telemetry.directory, dependencies.telemetryDirectory), id, { ...base, durationMs: Date.now() - startedAt, exitCode: captured.exitCode, stdoutBytes: Buffer.byteLength(captured.stdout), stderrBytes: Buffer.byteLength(captured.stderr), resultBytes: Buffer.byteLength(result), distilled: false, fallbackReason: "execution-error", result });
       return result;
     }

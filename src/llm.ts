@@ -11,6 +11,7 @@ export interface OutputSummaryRequest {
   exitCode: number | null;
   stdout: string;
   stderr: string;
+  targetOutputBytes: number;
   maxOutputBytes: number;
 }
 
@@ -57,7 +58,7 @@ export function createOutputProvider(config: OutputConfig, dependencies: { fetch
     async summarize(request) {
       const prompt = buildOutputPrompt(request);
       if (config.provider === "codex") {
-        return (dependencies.codexCompletion ?? codexCliCompletion)({ model: config.model, executable: config.codexCommand ?? DEFAULT_CODEX_COMMAND, prompt, timeoutMs: config.timeoutMs });
+        return (dependencies.codexCompletion ?? codexCliCompletion)({ model: config.model, executable: config.codexCommand ?? DEFAULT_CODEX_COMMAND, prompt, timeoutMs: config.timeoutMs, reasoningEffort: "low" });
       }
       if (config.provider === "local") await ensureLocalServer(config);
       return chatCompletion({ baseUrl: config.host, apiKey: config.apiKey, model: config.model, prompt, timeoutMs: config.timeoutMs, fetchImpl: dependencies.fetchImpl });
