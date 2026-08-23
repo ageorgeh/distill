@@ -20,6 +20,8 @@ describe("context evidence selection", () => {
     expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("Cover each independent numbered");
     expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("Prefer direct implementation owners");
     expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("generated owners");
+    expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("complete deterministic Git changed-file list");
+    expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("only representative changed-file graph seeds");
     expect(CONTEXT_AGENT_INSTRUCTIONS).not.toContain("Do not substitute server");
     expect(CONTEXT_AGENT_INSTRUCTIONS).toContain("remove that label");
     expect(prompt).toContain('"objective": "Fix the queue."');

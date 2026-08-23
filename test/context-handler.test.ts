@@ -10,7 +10,7 @@ import type { GortexContextProvider } from "../src/gortex-context";
 function retriever(counter?: { calls: number }): GortexContextProvider {
   return { gather: async () => {
     if (counter) counter.calls += 1;
-    return { text: "graph candidates", durationMs: 5, bytes: 16, rawBytes: 16, truncated: false, command: ["gortex", "explore"], supplementedReferences: [], documentationIndexes: [], deterministicEvidenceBytes: 0 };
+    return { text: "graph candidates", durationMs: 5, bytes: 16, rawBytes: 16, truncated: false, command: ["gortex", "explore"], retrievalTaskBytes: 20, explicitReferenceCount: 0, gitReferenceCount: 0, selectedGitReferences: [], gitSeedDecisions: [], gitAreaDigest: "", supplementedReferences: [], documentationIndexes: [], deterministicEvidenceBytes: 0 };
   } };
 }
 
@@ -47,7 +47,7 @@ describe("single-response context gathering", () => {
       expect(stored).toMatchObject({
         providerUsage: { inputTokens: 100, outputTokens: 20 }, childCommandCalls: 0,
         broadContext: false, resultBytes: Buffer.byteLength(result),
-        gortex: { durationMs: 5, bytes: 16, rawBytes: 16, truncated: false, command: ["gortex", "explore"] },
+        gortex: { durationMs: 5, bytes: 16, rawBytes: 16, truncated: false, command: ["gortex", "explore"], retrievalTaskBytes: 20 },
       });
       expect(stored.sourceManifest).toBeDefined();
     } finally { await rm(root, { recursive: true, force: true }); await rm(telemetry, { recursive: true, force: true }); }
@@ -87,18 +87,18 @@ describe("single-response context gathering", () => {
       const reviewRetriever: GortexContextProvider = { gather: async (request, options) => {
         retrievalRequest = request;
         retrievalOptions = options;
-        return { text: "review candidates", durationMs: 1, bytes: 17, rawBytes: 17, truncated: false, command: ["gortex", "explore"], supplementedReferences: ["worker.ts"], documentationIndexes: ["docs/llms.txt"], deterministicEvidenceBytes: 12 };
+        return { text: "review candidates", durationMs: 1, bytes: 17, rawBytes: 17, truncated: false, command: ["gortex", "explore"], retrievalTaskBytes: 42, explicitReferenceCount: 1, gitReferenceCount: 1, selectedGitReferences: ["worker.ts"], gitSeedDecisions: [], gitAreaDigest: "- root: 1 file", supplementedReferences: ["worker.ts"], documentationIndexes: ["docs/llms.txt"], deterministicEvidenceBytes: 12 };
       } };
       const gather = createContextHandler(resolveConfig({}), {
         provider: provider({ calls: 0 }),
         retriever: reviewRetriever,
-        gitContext: { gather: async () => ({ references: ["worker.ts"], text: "review patch", commands: [["git", "diff"]], truncated: false }) },
+        gitContext: { gather: async () => ({ references: ["worker.ts"], changes: [{ path: "worker.ts", additions: 1, deletions: 0, sources: ["committed"] }], text: "review patch", commands: [["git", "diff"]], truncated: false }) },
         telemetryDirectory: telemetry,
         resolveLimit: async () => ({ limit: 24_000, source: "default" }),
       });
       await gather({ action: "gather", workspaceRoot: root, intent: "review", objective: "Review this branch.", references: ["Task 085"] });
-      expect(retrievalRequest).toMatchObject({ baseRef: "dev", references: ["Task 085", "worker.ts"] });
-      expect(retrievalOptions).toMatchObject({ documentationIndexes: ["docs/llms.txt"], deterministicEvidence: "review patch" });
+      expect(retrievalRequest).toMatchObject({ baseRef: "dev", references: ["Task 085"] });
+      expect(retrievalOptions).toMatchObject({ documentationIndexes: ["docs/llms.txt"], deterministicEvidence: "review patch", gitChanges: [{ path: "worker.ts", additions: 1, deletions: 0, sources: ["committed"] }] });
     } finally { await rm(root, { recursive: true, force: true }); await rm(telemetry, { recursive: true, force: true }); }
   });
 

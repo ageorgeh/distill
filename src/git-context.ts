@@ -8,9 +8,19 @@ const GIT_DIFF_BYTE_LIMIT = 60_000;
 
 export interface GitContextResult {
   references: string[];
+  changes: GitChange[];
   text: string;
   commands: string[][];
   truncated: boolean;
+}
+
+export type GitChangeSource = "committed" | "working-tree" | "untracked";
+
+export interface GitChange {
+  path: string;
+  additions: number;
+  deletions: number;
+  sources: GitChangeSource[];
 }
 
 export interface GitContextProvider {
@@ -65,6 +75,35 @@ function repositoryPaths(root: string, nulSeparated: string): string[] {
   return result;
 }
 
+function numstat(output: string): Map<string, { additions: number; deletions: number }> {
+  const result = new Map<string, { additions: number; deletions: number }>();
+  for (const line of output.split(/\r?\n/).filter(Boolean)) {
+    const [rawAdditions, rawDeletions, ...pathParts] = line.split("\t");
+    const file = pathParts.join("\t");
+    if (!file) continue;
+    result.set(file, {
+      additions: /^\d+$/.test(rawAdditions ?? "") ? Number(rawAdditions) : 0,
+      deletions: /^\d+$/.test(rawDeletions ?? "") ? Number(rawDeletions) : 0,
+    });
+  }
+  return result;
+}
+
+function mergeChanges(parts: Array<{ paths: string[]; stats?: Map<string, { additions: number; deletions: number }>; source: GitChangeSource }>): GitChange[] {
+  const changes = new Map<string, GitChange>();
+  for (const part of parts) {
+    for (const file of part.paths) {
+      const existing = changes.get(file) ?? { path: file, additions: 0, deletions: 0, sources: [] };
+      const stats = part.stats?.get(file);
+      existing.additions += stats?.additions ?? 0;
+      existing.deletions += stats?.deletions ?? 0;
+      if (!existing.sources.includes(part.source)) existing.sources.push(part.source);
+      changes.set(file, existing);
+    }
+  }
+  return [...changes.values()];
+}
+
 function boundedDiff(diff: string): { text: string; truncated: boolean } {
   const buffer = Buffer.from(diff);
   if (buffer.length <= GIT_DIFF_BYTE_LIMIT) return { text: diff, truncated: false };
@@ -81,7 +120,7 @@ export function createGitContextProvider(dependencies: { spawn?: typeof spawn } 
   const spawnImpl = dependencies.spawn ?? spawn;
   return {
     async gather(request, options) {
-      if (request.intent === "implement" || request.intent === "advise") return { references: [], text: "", commands: [], truncated: false };
+      if (request.intent === "implement" || request.intent === "advise") return { references: [], changes: [], text: "", commands: [], truncated: false };
       const commands: string[][] = [];
       const execute = async (args: string[]) => {
         commands.push(["git", ...args]);
@@ -90,26 +129,49 @@ export function createGitContextProvider(dependencies: { spawn?: typeof spawn } 
       let label: string;
       let names: string;
       let patch: string;
+      let changes: GitChange[];
       if (request.intent === "review") {
         if (!request.baseRef) throw new Error("Review context requires baseRef or repository context.default_base.");
         const resolvedBase = (await execute(["rev-parse", "--verify", "--end-of-options", `${request.baseRef}^{commit}`])).trim();
         const mergeBase = (await execute(["merge-base", resolvedBase, "HEAD"])).trim();
-        [names, patch] = await Promise.all([
+        const [committedNames, committedPatch, committedNumstat, workingNames, workingPatch, workingNumstat, untrackedNames] = await Promise.all([
           execute(["diff", "--name-only", "-z", "--diff-filter=ACDMRTUXB", mergeBase, "HEAD", "--"]),
           execute(["diff", "--no-ext-diff", "--no-color", "--unified=20", mergeBase, "HEAD", "--"]),
+          execute(["diff", "--numstat", "--no-renames", mergeBase, "HEAD", "--"]),
+          execute(["diff", "--name-only", "-z", "--diff-filter=ACDMRTUXB", "HEAD", "--"]),
+          execute(["diff", "--no-ext-diff", "--no-color", "--unified=20", "HEAD", "--"]),
+          execute(["diff", "--numstat", "--no-renames", "HEAD", "--"]),
+          execute(["ls-files", "--others", "--exclude-standard", "-z", "--"]),
         ]);
+        const committedPaths = repositoryPaths(request.workspaceRoot, committedNames);
+        const workingPaths = repositoryPaths(request.workspaceRoot, workingNames);
+        const untrackedPaths = repositoryPaths(request.workspaceRoot, untrackedNames);
+        changes = mergeChanges([
+          { paths: committedPaths, stats: numstat(committedNumstat), source: "committed" },
+          { paths: workingPaths, stats: numstat(workingNumstat), source: "working-tree" },
+          { paths: untrackedPaths, source: "untracked" },
+        ]);
+        names = [...new Set([...committedPaths, ...workingPaths, ...untrackedPaths])].join("\0");
+        patch = [
+          `COMMITTED PATCH (${mergeBase}..HEAD)\n${committedPatch || "[no committed changes]"}`,
+          `WORKING-TREE PATCH (HEAD plus staged and unstaged changes)\n${workingPatch || "[no tracked working-tree changes]"}`,
+          `UNTRACKED FILES\n${untrackedPaths.length ? untrackedPaths.map((file) => `- ${file}`).join("\n") : "[no untracked files]"}`,
+        ].join("\n\n");
         label = `intent: review\nbase_ref: ${request.baseRef}\nresolved_base: ${resolvedBase}\nmerge_base: ${mergeBase}`;
       } else {
         [names, patch] = await Promise.all([
           execute(["diff", "--name-only", "-z", "--diff-filter=U", "--"]),
           execute(["diff", "--no-ext-diff", "--no-color", "--unified=20", "--diff-filter=U", "--"]),
         ]);
+        const paths = repositoryPaths(request.workspaceRoot, names);
+        changes = mergeChanges([{ paths, source: "working-tree" }]);
         label = "intent: merge\nsource: unmerged index and working-tree entries";
       }
       const references = repositoryPaths(request.workspaceRoot, names);
       const bounded = boundedDiff(patch);
       return {
         references,
+        changes,
         text: `${label}\nmandatory_seed_files:\n${references.length ? references.map((file) => `- ${file}`).join("\n") : "- none"}\n\nGIT PATCH\n${bounded.text || "[no matching changes]"}`,
         commands,
         truncated: bounded.truncated,

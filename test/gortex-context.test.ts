@@ -5,12 +5,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { resolveConfig } from "../src/config";
-import { createGortexContextProvider } from "../src/gortex-context";
+import { createGortexContextProvider, gortexAttemptFromError } from "../src/gortex-context";
+import type { GitChange } from "../src/git-context";
 
 function fakeChild() {
   const child = new EventEmitter() as any;
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
+  child.exitCode = null;
   child.kill = () => true;
   return child;
 }
@@ -87,6 +89,71 @@ describe("Gortex context over-gather", () => {
       expect(result.text).toContain("BEGIN");
       expect(result.text).toContain("END");
       expect(result.text).toContain("middle omitted");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("uses a bounded, diverse deterministic subset of changed files as graph seeds", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "distill-gortex-seeds-"));
+    try {
+      let task = "";
+      const config = resolveConfig({ context: { gortexMaxOutputBytes: 200_000 } }).context;
+      const provider = createGortexContextProvider(config, {
+        spawn: ((_command: string, args: string[]) => {
+          task = args[1] ?? "";
+          const child = fakeChild();
+          queueMicrotask(() => { child.stdout.end("relevant_symbols[0]: []\n"); child.exitCode = 0; child.emit("close", 0); });
+          return child;
+        }) as any,
+      });
+      const gitChanges: GitChange[] = [
+        ...Array.from({ length: 30 }, (_, index): GitChange => ({ path: `packages/modules/core/server/src/feature/owner-${index}.ts`, additions: index + 1, deletions: 0, sources: ["committed"] })),
+        { path: "packages/modules/core/admin/tests/pdf-rendition.test.ts", additions: 20, deletions: 2, sources: ["working-tree"] },
+        { path: "packages/modules/core/config/src/schema/pdf-rendition.ts", additions: 12, deletions: 1, sources: ["committed"] },
+        { path: "packages/modules/base/docs/pdf-rendition.md", additions: 8, deletions: 0, sources: ["committed"] },
+        { path: "packages/private/client/generated/content-types.manifest.json", additions: 2_000, deletions: 2_000, sources: ["committed"] },
+      ];
+      const result = await provider.gather({
+        action: "gather",
+        workspaceRoot: root,
+        intent: "review",
+        objective: "Review PDF rendition server ownership and contracts.",
+        references: ["task-105"],
+      }, { gitChanges, deterministicEvidence: `mandatory_seed_files:\n${gitChanges.map((change) => `- ${change.path}`).join("\n")}` });
+
+      expect(result.gitReferenceCount).toBe(gitChanges.length);
+      expect(result.selectedGitReferences).toHaveLength(24);
+      expect(result.selectedGitReferences).toContain("packages/modules/core/admin/tests/pdf-rendition.test.ts");
+      expect(result.selectedGitReferences).toContain("packages/modules/core/config/src/schema/pdf-rendition.ts");
+      expect(task).toContain("Explicit retrieval references:\n- task-105");
+      expect(task).toContain("Representative changed-file graph seeds:");
+      expect(task).toContain("Changed-area digest");
+      expect(task).not.toContain("packages/private/client/generated/content-types.manifest.json");
+      expect(result.text).toContain("mandatory_seed_files:");
+      expect(result.gitSeedDecisions.filter((decision) => decision.selected)).toHaveLength(24);
+      expect(result.gitSeedDecisions.some((decision) => !decision.selected && decision.reason.includes("lower-ranked"))).toBe(true);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("records the attempted bounded retrieval and requests graceful cancellation on timeout", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "distill-gortex-timeout-"));
+    try {
+      const signals: Array<NodeJS.Signals | number | undefined> = [];
+      const config = resolveConfig({ context: { gortexTimeoutMs: 5 } }).context;
+      const provider = createGortexContextProvider(config, {
+        spawn: (() => {
+          const child = fakeChild();
+          child.kill = (signal?: NodeJS.Signals | number) => { signals.push(signal); return true; };
+          return child;
+        }) as any,
+      });
+      let failure: unknown;
+      try {
+        await provider.gather({ action: "gather", workspaceRoot: root, intent: "advise", objective: "Locate the owner." });
+      } catch (error) { failure = error; }
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain("Gortex may continue daemon-side work");
+      expect(signals[0]).toBe("SIGINT");
+      expect(gortexAttemptFromError(failure)).toMatchObject({ explicitReferenceCount: 0, gitReferenceCount: 0, selectedGitReferences: [] });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });

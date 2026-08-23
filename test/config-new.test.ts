@@ -17,7 +17,8 @@ describe("new configuration", () => {
 
   it("defines context intents by operation and recommends remote review bases", () => {
     expect(CONTEXT_DESCRIPTION).toContain("advise for read-only investigation");
-    expect(CONTEXT_DESCRIPTION).toContain("review only when the actual base-to-HEAD branch or PR changeset is the subject");
+    expect(CONTEXT_DESCRIPTION).toContain("review only when the actual branch, PR, commit, diff, or working-tree changeset is itself the subject");
+    expect(CONTEXT_DESCRIPTION).toContain("Do not choose review merely because the objective asks to explain or assess changes");
     expect(CONTEXT_SCHEMA.properties.intent.description).toContain("Choose implement when code or configuration will change");
     expect(CONTEXT_SCHEMA.properties.baseRef.description).toContain("origin/dev");
     expect(CONTEXT_SCHEMA.properties.baseRef.description).toContain("does not fetch remotes");
