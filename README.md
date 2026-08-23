@@ -24,7 +24,9 @@ Invocation telemetry is stored under `.telemetry/invocations/` in the Distill in
 
 ## Command output
 
-`run` executes builds, tests, lint, formatting, type checks, logs, and mechanical searches. It always starts with a compact deterministic status such as `PASS exit=0` or `FAIL exit=1`. Small output is returned directly; large output is summarized as plain agent-to-agent lines without Markdown, emoji, conversational framing, or repeated status. Ordinary summaries target 2,000 bytes and may grow to 8,000 bytes for independent actionable failures. Cascaded failures are collapsed to their shared root cause and a few representative failures. Paths and diagnostics are kept whole; lower-priority findings are omitted instead of shortened with ellipses. Summarization provenance remains in telemetry, while exceptional response flags such as `provider-error`, `timeout`, and `truncated` are exposed when relevant. On Unix, commands run through the user's login shell while retaining Distill's complete inherited environment. NixOS's child-shell environment guard is cleared so the login shell reloads the complete generated machine/session environment, rather than preserving a partially filtered MCP snapshot.
+`run` executes builds, tests, lint, formatting, type checks, logs, and mechanical searches. Use `command` for one command or a genuinely dependent shell pipeline. For multi-stage validation, use `commands: [{ name, command }]`: stages run sequentially and every stage runs even when an earlier one fails. Distill reports deterministic aggregate and per-stage status, such as `FAIL stages=4 failed=1`, so `question` should normally be omitted. Reserve it for a short extraction focus that differs from the default—not exit-status requests, command restatement, task narrative, prior work, or exclusions.
+
+Small output is returned directly; large output is summarized once across all stages as plain agent-to-agent lines without Markdown, emoji, conversational framing, or repeated status. Ordinary summaries target 2,000 bytes and may grow to 8,000 bytes for independent actionable failures. Cascaded failures are collapsed to their shared root cause and a few representative failures. Paths and diagnostics are kept whole; lower-priority findings are omitted instead of shortened with ellipses. Successful large validation without a question needs no model call. Summarization provenance remains in telemetry, while exceptional response flags such as `provider-error`, `timeout`, and `truncated` are exposed when relevant. On Unix, commands run through the user's login shell while retaining Distill's complete inherited environment. NixOS's child-shell environment guard is cleared so the login shell reloads the complete generated machine/session environment, rather than preserving a partially filtered MCP snapshot.
 
 There is no pipeline interface: do not pipe output into Distill. Use `run` only for command output, not code review or exact-source reading.
 
@@ -83,5 +85,5 @@ tool_output_token_limit = 24000
 ```bash
 distill mcp
 distill context gather --intent implement --reference task-083 "Gather repository implementation context for the accepted durable-media fixes."
-distill run "Report root causes and the exit code" -- pnpm run verify
+distill run -- pnpm run verify
 ```

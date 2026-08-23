@@ -6,7 +6,7 @@ import { DEFAULT_PARENT_TOOL_OUTPUT_LIMIT, parseCommand, resolveConfig } from ".
 import { resolveToolOutputTokenLimit, resultBudget } from "../src/codex-config";
 import { readRepositoryConfig } from "../src/repo-config";
 import { resolveTelemetryDirectory } from "../src/telemetry";
-import { CONTEXT_DESCRIPTION, CONTEXT_SCHEMA } from "../src/mcp";
+import { CONTEXT_DESCRIPTION, CONTEXT_SCHEMA, RUN_DESCRIPTION, RUN_SCHEMA } from "../src/mcp";
 
 describe("new configuration", () => {
   it("resolves separate output and context settings", () => {
@@ -24,8 +24,18 @@ describe("new configuration", () => {
     expect(CONTEXT_SCHEMA.properties.baseRef.description).toContain("does not fetch remotes");
   });
 
+  it("teaches capable agents to use named command batches without narrative questions", () => {
+    expect(RUN_DESCRIPTION).toContain("Prefer commands for multi-stage validation");
+    expect(RUN_DESCRIPTION).toContain("continues after failures");
+    expect(RUN_DESCRIPTION).toContain("Omit question for ordinary validation");
+    expect(RUN_SCHEMA.oneOf).toEqual([{ required: ["command"] }, { required: ["commands"] }]);
+    expect(RUN_SCHEMA.properties.commands.maxItems).toBe(32);
+    expect(RUN_SCHEMA.properties.question.description).toContain("Never request exit status");
+  });
+
   it("parses the new CLI commands", () => {
     expect(parseCommand(["run", "status", "--", "pnpm", "lint"], "/repo")).toMatchObject({ kind: "run", request: { workspaceRoot: "/repo" } });
+    expect(parseCommand(["run", "--", "pnpm", "lint"], "/repo")).toEqual({ kind: "run", request: { workspaceRoot: "/repo", command: "'pnpm' 'lint'" } });
     expect(parseCommand(["context", "gather", "--intent", "review", "--reference", "task-083", "--reference", "src/a.ts", "--base-ref", "dev", "Gather evidence"], "/repo")).toEqual({ kind: "context", request: { action: "gather", workspaceRoot: "/repo", intent: "review", objective: "Gather evidence", references: ["task-083", "src/a.ts"], baseRef: "dev" } });
     expect(() => parseCommand(["context", "packet", "123e4567-e89b-12d3-a456-426614174000", "owner-1"], "/repo")).toThrow("Usage: distill context gather");
   });

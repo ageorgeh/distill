@@ -5,11 +5,14 @@ import { createOutputProvider, type OutputSummaryRequest } from "../src/llm";
 import { buildOutputPrompt } from "../src/prompt";
 
 const request: OutputSummaryRequest = {
-  command: "pnpm run verify",
   question: "Report each validation phase and exact failures.",
-  exitCode: 1,
-  stdout: "format passed\ntests failed",
-  stderr: "src/example.ts:7:9 error TS1234: exact failure",
+  stages: [{
+    name: "tests",
+    command: "pnpm run verify",
+    exitCode: 1,
+    stdout: "format passed\ntests failed",
+    stderr: "src/example.ts:7:9 error TS1234: exact failure",
+  }],
   targetOutputBytes: 2_000,
   maxOutputBytes: 8_000,
 };
@@ -18,10 +21,10 @@ describe("output summarization", () => {
   it("requests a compact agent-to-agent line protocol", () => {
     const prompt = buildOutputPrompt(request);
     expect(prompt.system).toContain("Do not use Markdown, bullets, headings, code fences, emoji, conversational language, or niceties.");
-    expect(prompt.system).toContain("never repeat the overall outcome or exit code");
+    expect(prompt.system).toContain("never repeat outcomes, exit codes, or successful stages");
     expect(prompt.system).toContain("Never shorten them with ellipses");
-    expect(prompt.system).toContain("<scope> skipped [reason=<short reason>]");
     expect(prompt.system).toContain("Target at most 2000 bytes. The hard maximum is 8000 bytes.");
+    expect(prompt.user).toContain("[stage tests]\nCommand: pnpm run verify\nExit code: 1");
     expect(prompt.user).toContain("src/example.ts:7:9 error TS1234: exact failure");
   });
 

@@ -1,16 +1,17 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
-import type { ResolvedConfig, RunRequest } from "./config";
+import type { ResolvedConfig, RunRequest, RunStage } from "./config";
 import { resolveToolOutputTokenLimit, resultBudget, type ResolvedToolOutputLimit } from "./codex-config";
 import { createOutputProvider, type OutputProvider } from "./llm";
 import { resolveTelemetryDirectory, telemetryId, writeTelemetry } from "./telemetry";
 
-export const DEFAULT_RUN_QUESTION = "If the command failed, report actionable root causes, relevant paths, line numbers, test names, and error messages. For requested checks, report compact pass, fail, or skipped totals. Omit successful detail.";
+export const DEFAULT_RUN_QUESTION = "Report only actionable failures: the shared root cause, affected count, exact paths, line numbers, test names, and error messages. Omit successful stages and successful detail.";
 export const RUN_SUMMARY_TARGET_BYTES = 2_000;
 export const RUN_SUMMARY_MAX_BYTES = 8_000;
 const RUN_ENVELOPE_RESERVE_BYTES = 96;
 interface CapturedCommand { stdout: string; stderr: string; exitCode: number | null; terminationError?: string; }
+interface ExecutedStage extends CapturedCommand, RunStage { durationMs: number; }
 type ResolveLimit = () => Promise<ResolvedToolOutputLimit | number>;
 
 export function resolveCommandShell(
@@ -76,6 +77,35 @@ function resultHeader(status: "PASS" | "FAIL", captured: CapturedCommand, except
   return `${status} exit=${captured.exitCode ?? "null"}${flags.length ? ` ${flags.join(" ")}` : ""}`;
 }
 
+function requestStages(request: RunRequest): { stages: RunStage[]; batch: boolean } {
+  return request.commands
+    ? { stages: request.commands.map((stage) => ({ name: stage.name.trim(), command: stage.command })), batch: true }
+    : { stages: [{ name: "command", command: request.command! }], batch: false };
+}
+
+function stageOutput(stage: ExecutedStage): string {
+  return `${stage.stdout}${stage.stderr}${stage.terminationError ? `${stage.stdout || stage.stderr ? "\n" : ""}${stage.terminationError}` : ""}`;
+}
+
+function stageStatus(stage: ExecutedStage): string {
+  if (stage.exitCode === 0) return `${stage.name} pass`;
+  const flag = stage.terminationError?.startsWith("Command timed out") ? " timeout" : stage.terminationError ? " execution-error" : "";
+  return `${stage.name} fail exit=${stage.exitCode ?? "null"}${flag}`;
+}
+
+function batchHeader(stages: ExecutedStage[], exceptional?: "provider-error" | "execution-error"): string {
+  const failed = stages.filter((stage) => stage.exitCode !== 0).length;
+  return `${failed ? `FAIL stages=${stages.length} failed=${failed}` : `PASS stages=${stages.length}`}${exceptional ? ` ${exceptional}` : ""}`;
+}
+
+function rawStageOutput(stages: ExecutedStage[], batch: boolean, includeSuccessful = true): string {
+  if (!batch) return stageOutput(stages[0]!);
+  return stages.filter((stage) => includeSuccessful || stage.exitCode !== 0).flatMap((stage) => {
+    const output = stageOutput(stage);
+    return output ? [`output ${stage.name}\n${output}`] : [];
+  }).join("\n");
+}
+
 function renderResult(header: string, payload: string, maxBytes: number): { text: string; capped: boolean } {
   const value = payload ? `${header}\n${payload}` : header;
   if (Buffer.byteLength(value) <= maxBytes) return { text: value, capped: false };
@@ -87,8 +117,12 @@ function renderResult(header: string, payload: string, maxBytes: number): { text
 
 export function createRunHandler(config: ResolvedConfig, dependencies: { provider?: OutputProvider; resolveLimit?: ResolveLimit; telemetryDirectory?: string } = {}) {
   return async (request: RunRequest): Promise<string> => {
-    const id = telemetryId(); const startedAt = Date.now(); let captured: CapturedCommand = { stdout: "", stderr: "", exitCode: null };
-    const base = { id, timestamp: new Date().toISOString(), mode: "run" as const, workspaceRoot: request.workspaceRoot, command: request.command, ...(request.question ? { question: request.question } : {}), provider: config.output.provider, model: config.output.model };
+    const id = telemetryId(); const startedAt = Date.now(); const requested = requestStages(request); let executed: ExecutedStage[] = [];
+    const base = {
+      id, timestamp: new Date().toISOString(), mode: "run" as const, workspaceRoot: request.workspaceRoot,
+      ...(requested.batch ? { commands: requested.stages } : { command: requested.stages[0]!.command }),
+      ...(request.question ? { question: request.question } : {}), provider: config.output.provider, model: config.output.model,
+    };
     try {
       if (!path.isAbsolute(request.workspaceRoot)) throw new Error("workspaceRoot must be an absolute path.");
       const workspaceRoot = await realpath(request.workspaceRoot);
@@ -97,29 +131,47 @@ export function createRunHandler(config: ResolvedConfig, dependencies: { provide
       const responseByteBudget = Math.min(budget.resultByteBudget, RUN_SUMMARY_MAX_BYTES + RUN_ENVELOPE_RESERVE_BYTES);
       const summaryMaxBytes = Math.max(128, responseByteBudget - RUN_ENVELOPE_RESERVE_BYTES);
       const summaryTargetBytes = Math.min(RUN_SUMMARY_TARGET_BYTES, summaryMaxBytes);
-      const commandStartedAt = Date.now(); captured = await execute(request.command, workspaceRoot, config.output.timeoutMs); const commandDurationMs = Date.now() - commandStartedAt;
-      const combined = `${captured.stdout}${captured.stderr}${captured.terminationError ? `\n${captured.terminationError}` : ""}`;
-      const status = captured.exitCode === 0 ? "PASS" : "FAIL";
-      let header = resultHeader(status, captured); let payload = ""; let distilled = false; let fallbackReason: string | undefined; let providerDurationMs: number | undefined; let providerUsage: unknown;
-      if (!combined) payload = "";
-      else if (Buffer.byteLength(combined) <= config.output.smallOutputBytes) payload = combined;
+      for (const stage of requested.stages) {
+        const stageStartedAt = Date.now();
+        const captured = await execute(stage.command, workspaceRoot, config.output.timeoutMs);
+        executed.push({ ...stage, ...captured, durationMs: Date.now() - stageStartedAt });
+      }
+      const rawOutputBytes = executed.reduce((total, stage) => total + Buffer.byteLength(stageOutput(stage)), 0);
+      const failedStages = executed.filter((stage) => stage.exitCode !== 0);
+      const aggregateExitCode = failedStages.length ? 1 : 0;
+      const telemetryExitCode = requested.batch ? aggregateExitCode : executed[0]!.exitCode;
+      let header = requested.batch ? batchHeader(executed) : resultHeader(aggregateExitCode === 0 ? "PASS" : "FAIL", executed[0]!);
+      const statuses = requested.batch ? executed.map(stageStatus).join("\n") : "";
+      let diagnostics = ""; let distilled = false; let fallbackReason: string | undefined; let providerDurationMs: number | undefined; let providerUsage: unknown;
+      if (rawOutputBytes === 0) diagnostics = "";
+      else if (rawOutputBytes <= config.output.smallOutputBytes) diagnostics = rawStageOutput(executed, requested.batch, Boolean(request.question));
+      else if (aggregateExitCode === 0 && !request.question) diagnostics = "";
       else {
         try {
-          const summary = await (dependencies.provider ?? createOutputProvider(config.output)).summarize({ command: request.command, question: request.question ?? DEFAULT_RUN_QUESTION, exitCode: captured.exitCode, stdout: captured.stdout, stderr: captured.stderr, targetOutputBytes: summaryTargetBytes, maxOutputBytes: summaryMaxBytes });
-          payload = summary.text; distilled = true; providerDurationMs = summary.durationMs; providerUsage = summary.usage;
-        } catch { header = resultHeader(status, captured, "provider-error"); payload = combined; fallbackReason = "provider-error"; }
+          const summary = await (dependencies.provider ?? createOutputProvider(config.output)).summarize({
+            question: request.question ?? DEFAULT_RUN_QUESTION,
+            stages: executed.map(({ name, command, exitCode, stdout, stderr, terminationError }) => ({ name, command, exitCode, stdout, stderr, ...(terminationError ? { terminationError } : {}) })),
+            targetOutputBytes: summaryTargetBytes,
+            maxOutputBytes: summaryMaxBytes,
+          });
+          diagnostics = summary.text; distilled = true; providerDurationMs = summary.durationMs; providerUsage = summary.usage;
+        } catch {
+          header = requested.batch ? batchHeader(executed, "provider-error") : resultHeader(aggregateExitCode === 0 ? "PASS" : "FAIL", executed[0]!, "provider-error");
+          diagnostics = rawStageOutput(executed, requested.batch, Boolean(request.question)); fallbackReason = "provider-error";
+        }
       }
+      const payload = [statuses, diagnostics].filter(Boolean).join("\n");
       const bounded = renderResult(header, payload, responseByteBudget);
       await writeTelemetry(resolveTelemetryDirectory(config.telemetry.directory, dependencies.telemetryDirectory), id, {
-        ...base, durationMs: Date.now() - startedAt, commandDurationMs, ...(providerDurationMs !== undefined ? { providerDurationMs } : {}), ...(providerUsage ? { providerUsage } : {}),
+        ...base, durationMs: Date.now() - startedAt, commandDurationMs: executed.reduce((total, stage) => total + stage.durationMs, 0), stages: executed.map(({ name, command, exitCode, durationMs, stdout, stderr, terminationError }) => ({ name, command, exitCode, durationMs, stdoutBytes: Buffer.byteLength(stdout), stderrBytes: Buffer.byteLength(stderr), ...(terminationError ? { terminationError } : {}) })), ...(providerDurationMs !== undefined ? { providerDurationMs } : {}), ...(providerUsage ? { providerUsage } : {}),
         resolvedToolOutputTokenLimit: resolved.limit, toolOutputLimitSource: resolved.source, ...(resolved.configPath ? { toolOutputConfigPath: resolved.configPath } : {}), ...budget,
-        exitCode: captured.exitCode, stdoutBytes: Buffer.byteLength(captured.stdout), stderrBytes: Buffer.byteLength(captured.stderr), rawBytes: Buffer.byteLength(combined), resultBytes: Buffer.byteLength(bounded.text), compressionRatio: combined ? Number((Buffer.byteLength(bounded.text) / Buffer.byteLength(combined)).toFixed(4)) : 1,
+        exitCode: telemetryExitCode, stdoutBytes: executed.reduce((total, stage) => total + Buffer.byteLength(stage.stdout), 0), stderrBytes: executed.reduce((total, stage) => total + Buffer.byteLength(stage.stderr), 0), rawBytes: rawOutputBytes, resultBytes: Buffer.byteLength(bounded.text), compressionRatio: rawOutputBytes ? Number((Buffer.byteLength(bounded.text) / rawOutputBytes).toFixed(4)) : 1,
         resultCapped: bounded.capped, distilled, ...(fallbackReason ? { fallbackReason } : {}), result: bounded.text,
       });
       return bounded.text;
     } catch (error) {
-      const result = `${resultHeader("FAIL", captured, "execution-error")}\n${error instanceof Error ? error.message : String(error)}`;
-      await writeTelemetry(resolveTelemetryDirectory(config.telemetry.directory, dependencies.telemetryDirectory), id, { ...base, durationMs: Date.now() - startedAt, exitCode: captured.exitCode, stdoutBytes: Buffer.byteLength(captured.stdout), stderrBytes: Buffer.byteLength(captured.stderr), resultBytes: Buffer.byteLength(result), distilled: false, fallbackReason: "execution-error", result });
+      const result = `FAIL execution-error\n${error instanceof Error ? error.message : String(error)}`;
+      await writeTelemetry(resolveTelemetryDirectory(config.telemetry.directory, dependencies.telemetryDirectory), id, { ...base, durationMs: Date.now() - startedAt, exitCode: null, stdoutBytes: executed.reduce((total, stage) => total + Buffer.byteLength(stage.stdout), 0), stderrBytes: executed.reduce((total, stage) => total + Buffer.byteLength(stage.stderr), 0), resultBytes: Buffer.byteLength(result), distilled: false, fallbackReason: "execution-error", result });
       return result;
     }
   };

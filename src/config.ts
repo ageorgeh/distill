@@ -76,11 +76,20 @@ export interface ContextGatherRequest {
 
 export type ContextRequest = ContextGatherRequest;
 
-export interface RunRequest {
-  workspaceRoot: string;
+export interface RunStage {
+  name: string;
   command: string;
+}
+
+interface RunRequestBase {
+  workspaceRoot: string;
   question?: string;
 }
+
+export type RunRequest = RunRequestBase & (
+  | { command: string; commands?: never }
+  | { command?: never; commands: RunStage[] }
+);
 
 export type Command =
   | { kind: "help" }
@@ -168,10 +177,11 @@ export function parseCommand(argv: string[], cwd = process.cwd()): Command {
   if (argv.length === 1 && argv[0] === "mcp") return { kind: "mcp" };
   if (argv[0] === "run") {
     const divider = argv.indexOf("--");
-    if (divider < 2 || divider === argv.length - 1) throw new UsageError("Usage: distill run <question> -- <command>");
+    if (divider < 1 || divider === argv.length - 1) throw new UsageError("Usage: distill run [question] -- <command>");
     const commandTokens = argv.slice(divider + 1);
     const command = commandTokens.length === 1 ? commandTokens[0]! : commandTokens.map((token) => `'${token.replace(/'/g, "'\\\"'\\\"")}'`).join(" ");
-    return { kind: "run", request: { workspaceRoot: cwd, question: argv.slice(1, divider).join(" ").trim() || undefined, command } };
+    const question = argv.slice(1, divider).join(" ").trim();
+    return { kind: "run", request: { workspaceRoot: cwd, ...(question ? { question } : {}), command } };
   }
   if (argv[0] === "context") {
     const action = argv[1];
@@ -191,9 +201,9 @@ export function parseCommand(argv: string[], cwd = process.cwd()): Command {
     if (!joined) throw new UsageError("A retrieval objective is required.");
     return { kind: "context", request: { action: "gather", workspaceRoot: cwd, intent, objective: joined, ...(references.length ? { references } : {}), ...(baseRef ? { baseRef } : {}) }, ...(inlineEvidenceFile ? { inlineEvidenceFile } : {}) };
   }
-  throw new UsageError("Usage: distill mcp | distill context gather ... | distill run <question> -- <command>");
+  throw new UsageError("Usage: distill mcp | distill context gather ... | distill run [question] -- <command>");
 }
 
 export function formatUsage(): string {
-  return ["Usage:", "  distill mcp", "  distill context gather --intent implement --reference task-083 \"Gather repository context.\"", "  distill run \"Report failures with paths and line numbers\" -- pnpm lint", "", "Configuration: distill.config.ts"].join("\n");
+  return ["Usage:", "  distill mcp", "  distill context gather --intent implement --reference task-083 \"Gather repository context.\"", "  distill run -- pnpm lint", "  distill run \"List failing tests with exact locations\" -- pnpm test", "", "Configuration: distill.config.ts"].join("\n");
 }

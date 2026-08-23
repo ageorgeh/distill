@@ -50,7 +50,7 @@ describe("run", () => {
 
   it("uses a provider only for large output and bounds provider failures", async () => {
     const config = resolveConfig({ output: { smallOutputBytes: 10 } });
-    const request = { workspaceRoot: process.cwd(), command: "yes x | head -n 50" };
+    const request = { workspaceRoot: process.cwd(), command: "yes x | head -n 50", question: "Report the item count." };
     let targetOutputBytes = 0; let maxOutputBytes = 0;
     const compressed = await createRunHandler(config, { provider: { summarize: async (summaryRequest) => {
       targetOutputBytes = summaryRequest.targetOutputBytes; maxOutputBytes = summaryRequest.maxOutputBytes;
@@ -69,9 +69,49 @@ describe("run", () => {
     const output = await createRunHandler(config, {
       provider: { summarize: async () => ({ text: "diagnostic line\n".repeat(1_000), durationMs: 2 }) },
       resolveLimit: async () => 2_500,
-    })({ workspaceRoot: process.cwd(), command: "yes x | head -n 50" });
+    })({ workspaceRoot: process.cwd(), command: "yes x | head -n 50", question: "Return every diagnostic line." });
     expect(output).toStartWith("PASS exit=0 truncated\n");
     expect(output).toEndWith("[additional diagnostics omitted to fit parent tool-output budget]");
     expect(Buffer.byteLength(output)).toBeLessThanOrEqual(8_000);
+  });
+
+  it("runs every named validation stage and reports each real exit", async () => {
+    const telemetry = await mkdtemp(path.join(tmpdir(), "distill-run-batch-"));
+    try {
+      const run = createRunHandler(resolveConfig({}), { telemetryDirectory: telemetry });
+      const output = await run({
+        workspaceRoot: process.cwd(),
+        commands: [
+          { name: "lint", command: "sh -c 'echo lint-bad >&2; exit 2'" },
+          { name: "build", command: "printf build-ran" },
+          { name: "test-types", command: "sh -c 'exit 3'" },
+        ],
+      });
+      expect(output).toStartWith("FAIL stages=3 failed=2\nlint fail exit=2\nbuild pass\ntest-types fail exit=3");
+      expect(output).toContain("output lint\nlint-bad");
+      expect(output).not.toContain("build-ran");
+
+      const files = await (await import("node:fs/promises")).readdir(path.join(telemetry, "invocations"));
+      const stored = JSON.parse(await readFile(path.join(telemetry, "invocations", files[0]!), "utf8"));
+      expect(stored.exitCode).toBe(1);
+      expect(stored.stages.map((stage: { name: string; exitCode: number }) => [stage.name, stage.exitCode])).toEqual([
+        ["lint", 2], ["build", 0], ["test-types", 3],
+      ]);
+    } finally { await rm(telemetry, { recursive: true, force: true }); }
+  });
+
+  it("skips summarization for successful large validation without a question", async () => {
+    let providerCalls = 0;
+    const output = await createRunHandler(resolveConfig({ output: { smallOutputBytes: 10 } }), {
+      provider: { summarize: async () => { providerCalls += 1; return { text: "unused", durationMs: 1 }; } },
+    })({
+      workspaceRoot: process.cwd(),
+      commands: [
+        { name: "lint", command: "yes lint-ok | head -n 20" },
+        { name: "build", command: "yes build-ok | head -n 20" },
+      ],
+    });
+    expect(output).toBe("PASS stages=2\nlint pass\nbuild pass");
+    expect(providerCalls).toBe(0);
   });
 });

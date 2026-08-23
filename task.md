@@ -140,11 +140,18 @@ The `context` result should be returned as one compact text content block contai
 Input:
 
 ```ts
-interface RunRequest {
-  workspaceRoot: string;
+interface RunStage {
+  name: string;
   command: string;
-  question?: string;
 }
+
+type RunRequest = {
+  workspaceRoot: string;
+  question?: string;
+} & (
+  | { command: string; commands?: never }
+  | { command?: never; commands: RunStage[] }
+);
 ```
 
 Distill must execute the command itself from `workspaceRoot`.
@@ -153,11 +160,11 @@ The capable agent must not run a command and then send its output to Distill. Ra
 
 If `question` is omitted, use a useful default:
 
-> Report whether the command succeeded. If it failed, include the actionable failures, relevant paths, line numbers, test names, and error messages. Omit successful noise.
+> Report only actionable failures: the shared root cause, affected count, exact paths, line numbers, test names, and error messages. Omit successful stages and successful detail.
 
 #### MCP tool description
 
-> Use to execute builds, tests, linting, type checks, searches, logs, diffs, and other commands whose output may be large, noisy, or empty. Distill always returns the command exit status and enough information to avoid rerunning a silent or already-understandable command.
+> Use to execute builds, tests, linting, type checks, searches, logs, diffs, and other commands whose output may be large, noisy, or empty. Use one `command` for an individual command or dependent pipeline. Prefer named `commands` for multi-stage validation so every stage runs despite earlier failures and receives deterministic status. Omit `question` for ordinary validation; use it only for a short specialized extraction focus, never status requests or parent-task narrative.
 
 The result should be returned as one compact text content block.
 
@@ -570,6 +577,8 @@ Distill executes the requested command from `workspaceRoot` and captures:
 - duration;
 - termination error when applicable.
 
+For named `commands`, execute stages sequentially in order and continue after every failure. Capture each stage independently and return deterministic aggregate and per-stage status. Compress their combined output in at most one provider call. The single `command` form retains normal shell semantics for genuinely dependent pipelines.
+
 Unix execution support is required. Use the current platform shell without building a large cross-platform command abstraction.
 
 ### Empty output
@@ -732,7 +741,7 @@ distill mcp
 Starts the stdio MCP server.
 
 ```bash
-distill run "Report failures with paths and line numbers" -- pnpm lint
+distill run -- pnpm lint
 ```
 
 Executes the command through the same implementation used by the MCP `run` tool.
@@ -850,12 +859,22 @@ Run telemetry should include:
   timestamp: string;
   mode: 'run';
   workspaceRoot: string;
-  command: string;
+  command?: string;
+  commands?: RunStage[];
   question?: string;
   provider?: string;
   model?: string;
   durationMs: number;
   exitCode: number | null;
+  stages?: Array<{
+    name: string;
+    command: string;
+    exitCode: number | null;
+    durationMs: number;
+    stdoutBytes: number;
+    stderrBytes: number;
+    terminationError?: string;
+  }>;
   stdoutBytes: number;
   stderrBytes: number;
   resultBytes: number;

@@ -6,11 +6,15 @@ import { buildOutputPrompt, type PromptMessages } from "./prompt";
 type FetchImplementation = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface OutputSummaryRequest {
-  command: string;
   question: string;
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
+  stages: Array<{
+    name: string;
+    command: string;
+    exitCode: number | null;
+    stdout: string;
+    stderr: string;
+    terminationError?: string;
+  }>;
   targetOutputBytes: number;
   maxOutputBytes: number;
 }
