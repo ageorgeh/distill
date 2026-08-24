@@ -28,6 +28,8 @@ describe("new configuration", () => {
     expect(RUN_DESCRIPTION).toContain("Prefer commands for multi-stage validation");
     expect(RUN_DESCRIPTION).toContain("continues after failures");
     expect(RUN_DESCRIPTION).toContain("Omit question for ordinary validation");
+    expect(RUN_SCHEMA.anyOf).toEqual([{ required: ["workspaceRoot"] }, { required: ["cwd"] }]);
+    expect(RUN_SCHEMA.properties.cwd.description).toContain("Alias for workspaceRoot");
     expect(RUN_SCHEMA.oneOf).toEqual([{ required: ["command"] }, { required: ["commands"] }]);
     expect(RUN_SCHEMA.properties.commands.maxItems).toBe(32);
     expect(RUN_SCHEMA.properties.question.description).toContain("Never request exit status");

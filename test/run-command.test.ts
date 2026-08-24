@@ -80,22 +80,22 @@ describe("run", () => {
     try {
       const run = createRunHandler(resolveConfig({}), { telemetryDirectory: telemetry });
       const output = await run({
-        workspaceRoot: process.cwd(),
+        cwd: process.cwd(),
         commands: [
-          { name: "lint", command: "sh -c 'echo lint-bad >&2; exit 2'" },
+          { name: "lint\nrepository", command: "sh -c 'echo lint-bad >&2; exit 2'" },
           { name: "build", command: "printf build-ran" },
           { name: "test-types", command: "sh -c 'exit 3'" },
         ],
       });
-      expect(output).toStartWith("FAIL stages=3 failed=2\nlint fail exit=2\nbuild pass\ntest-types fail exit=3");
-      expect(output).toContain("output lint\nlint-bad");
+      expect(output).toStartWith("FAIL stages=3 failed=2\nlint repository fail exit=2\nbuild pass\ntest-types fail exit=3");
+      expect(output).toContain("output lint repository\nlint-bad");
       expect(output).not.toContain("build-ran");
 
       const files = await (await import("node:fs/promises")).readdir(path.join(telemetry, "invocations"));
       const stored = JSON.parse(await readFile(path.join(telemetry, "invocations", files[0]!), "utf8"));
       expect(stored.exitCode).toBe(1);
       expect(stored.stages.map((stage: { name: string; exitCode: number }) => [stage.name, stage.exitCode])).toEqual([
-        ["lint", 2], ["build", 0], ["test-types", 3],
+        ["lint repository", 2], ["build", 0], ["test-types", 3],
       ]);
     } finally { await rm(telemetry, { recursive: true, force: true }); }
   });

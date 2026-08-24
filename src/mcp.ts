@@ -6,7 +6,7 @@ import { createContextHandler } from "./context";
 import { createRunHandler } from "./run-command";
 
 export const CONTEXT_DESCRIPTION = "Use after the capable agent understands the authoritative task but before broad repository discovery. Choose intent by the operation, not by words such as investigate, defect, changes, assess, or review: implement when code or configuration will change; advise for read-only investigation, diagnosis, explanation, or assessment of existing behavior; review only when the actual branch, PR, commit, diff, or working-tree changeset is itself the subject; merge only when unmerged conflicts are the subject. Do not choose review merely because the objective asks to explain or assess changes. Provide the complete retrieval objective and relevant task IDs, symbols, paths, branches, or issue references. Distill runs one deterministic Gortex over-gather and one tool-disabled Spark manifest-selection pass, then returns a flat bundle containing exact source, direct owners, directly governing boundaries and tests, and completed searches. Review and merge requests also include deterministic Git evidence. Treat included exact source as already read and make only targeted follow-up reads. Distill does not diagnose, advise, plan, review correctness, or replace task understanding. Skip narrow work that already has sufficient local context.";
-export const RUN_DESCRIPTION = "Execute builds, tests, lint, type checks, formatting, logs, mechanical searches, and validation whose output may be large, noisy, or empty. Use command for one command or a genuinely dependent shell pipeline. Prefer commands for multi-stage validation: Distill runs named stages sequentially, continues after failures, and reports every real stage exit. Omit question for ordinary validation. Use it only for a short output-extraction requirement that differs from the default; never request exit status, restate stages, narrate why the command is running, or include parent-task history. Distill returns direct small output or one compact plain-text root-cause summary. It does not review correctness or replace exact source reading.";
+export const RUN_DESCRIPTION = "Execute builds, tests, lint, type checks, formatting, logs, mechanical searches, and validation whose output may be large, noisy, or empty. Set the working directory with workspaceRoot or its cwd alias. Use command for one command or a genuinely dependent shell pipeline. Prefer commands for multi-stage validation: Distill runs named stages sequentially, continues after failures, and reports every real stage exit. Omit question for ordinary validation. Use it only for a short output-extraction requirement that differs from the default; never request exit status, restate stages, narrate why the command is running, or include parent-task history. Distill returns direct small output or one compact plain-text root-cause summary. It does not review correctness or replace exact source reading.";
 
 export const CONTEXT_SCHEMA = {
   type: "object",
@@ -29,10 +29,11 @@ export const CONTEXT_SCHEMA = {
 export const RUN_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["workspaceRoot"],
+  anyOf: [{ required: ["workspaceRoot"] }, { required: ["cwd"] }],
   oneOf: [{ required: ["command"] }, { required: ["commands"] }],
   properties: {
     workspaceRoot: { type: "string" },
+    cwd: { type: "string", description: "Alias for workspaceRoot." },
     command: { type: "string", description: "One command or a genuinely dependent shell pipeline. Do not provide this together with commands." },
     commands: {
       type: "array",
@@ -56,7 +57,10 @@ function isContextRequest(value: unknown): value is ContextRequest {
 }
 function isRunRequest(value: unknown): value is RunRequest {
   const request = value as Record<string, unknown> | undefined;
-  if (!request || typeof request.workspaceRoot !== "string") return false;
+  if (!request) return false;
+  const workspaceRoot = typeof request.workspaceRoot === "string" && request.workspaceRoot.trim() ? request.workspaceRoot : undefined;
+  const cwd = typeof request.cwd === "string" && request.cwd.trim() ? request.cwd : undefined;
+  if ((!workspaceRoot && !cwd) || (workspaceRoot && cwd && workspaceRoot !== cwd)) return false;
   const hasCommand = typeof request.command === "string" && request.command.trim().length > 0;
   const commands = request.commands;
   const hasCommands = Array.isArray(commands) && commands.length > 0 && commands.length <= 32 && commands.every((stage) => {
@@ -66,7 +70,7 @@ function isRunRequest(value: unknown): value is RunRequest {
   if (hasCommand === hasCommands) return false;
   if (!hasCommands) return true;
   const stages = commands as Array<{ name: string }>;
-  return new Set(stages.map((stage) => stage.name.trim())).size === stages.length;
+  return new Set(stages.map((stage) => stage.name.trim().replace(/\s+/g, " "))).size === stages.length;
 }
 
 export function createMcpServer(config: ResolvedConfig): Server {

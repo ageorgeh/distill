@@ -82,11 +82,13 @@ export interface RunStage {
 }
 
 interface RunRequestBase {
-  workspaceRoot: string;
   question?: string;
 }
 
 export type RunRequest = RunRequestBase & (
+  | { workspaceRoot: string; cwd?: never }
+  | { workspaceRoot?: never; cwd: string }
+) & (
   | { command: string; commands?: never }
   | { command?: never; commands: RunStage[] }
 );

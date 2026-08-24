@@ -79,8 +79,12 @@ function resultHeader(status: "PASS" | "FAIL", captured: CapturedCommand, except
 
 function requestStages(request: RunRequest): { stages: RunStage[]; batch: boolean } {
   return request.commands
-    ? { stages: request.commands.map((stage) => ({ name: stage.name.trim(), command: stage.command })), batch: true }
+    ? { stages: request.commands.map((stage) => ({ name: stage.name.trim().replace(/\s+/g, " "), command: stage.command })), batch: true }
     : { stages: [{ name: "command", command: request.command! }], batch: false };
+}
+
+function requestWorkspaceRoot(request: RunRequest): string {
+  return request.workspaceRoot ?? request.cwd;
 }
 
 function stageOutput(stage: ExecutedStage): string {
@@ -118,14 +122,15 @@ function renderResult(header: string, payload: string, maxBytes: number): { text
 export function createRunHandler(config: ResolvedConfig, dependencies: { provider?: OutputProvider; resolveLimit?: ResolveLimit; telemetryDirectory?: string } = {}) {
   return async (request: RunRequest): Promise<string> => {
     const id = telemetryId(); const startedAt = Date.now(); const requested = requestStages(request); let executed: ExecutedStage[] = [];
+    const requestedWorkspaceRoot = requestWorkspaceRoot(request);
     const base = {
-      id, timestamp: new Date().toISOString(), mode: "run" as const, workspaceRoot: request.workspaceRoot,
+      id, timestamp: new Date().toISOString(), mode: "run" as const, workspaceRoot: requestedWorkspaceRoot,
       ...(requested.batch ? { commands: requested.stages } : { command: requested.stages[0]!.command }),
       ...(request.question ? { question: request.question } : {}), provider: config.output.provider, model: config.output.model,
     };
     try {
-      if (!path.isAbsolute(request.workspaceRoot)) throw new Error("workspaceRoot must be an absolute path.");
-      const workspaceRoot = await realpath(request.workspaceRoot);
+      if (!path.isAbsolute(requestedWorkspaceRoot)) throw new Error("workspaceRoot/cwd must be an absolute path.");
+      const workspaceRoot = await realpath(requestedWorkspaceRoot);
       const resolved = normalizeLimit(await (dependencies.resolveLimit ?? resolveToolOutputTokenLimit)());
       const budget = resultBudget(resolved);
       const responseByteBudget = Math.min(budget.resultByteBudget, RUN_SUMMARY_MAX_BYTES + RUN_ENVELOPE_RESERVE_BYTES);

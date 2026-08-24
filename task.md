@@ -146,9 +146,11 @@ interface RunStage {
 }
 
 type RunRequest = {
-  workspaceRoot: string;
   question?: string;
 } & (
+  | { workspaceRoot: string; cwd?: never }
+  | { workspaceRoot?: never; cwd: string }
+) & (
   | { command: string; commands?: never }
   | { command?: never; commands: RunStage[] }
 );
