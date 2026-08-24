@@ -15,13 +15,14 @@ describe("new configuration", () => {
     expect(config.context).toMatchObject({ provider: "codex", model: "spark", gortexCommand: "custom-gortex", gortexMaxSymbols: 120, gortexMaxOutputBytes: 180_000, gortexTimeoutMs: 60_000 });
   });
 
-  it("defines context intents by operation and recommends remote review bases", () => {
+  it("defines unambiguous context intents and current remote merge-review bases", () => {
     expect(CONTEXT_DESCRIPTION).toContain("advise for read-only investigation");
-    expect(CONTEXT_DESCRIPTION).toContain("review only when the actual branch, PR, commit, diff, or working-tree changeset is itself the subject");
-    expect(CONTEXT_DESCRIPTION).toContain("Do not choose review merely because the objective asks to explain or assess changes");
+    expect(CONTEXT_DESCRIPTION).toContain("merge-review only when the actual branch, pull/merge request, commit, diff, or working-tree changeset is itself the subject");
+    expect(CONTEXT_DESCRIPTION).toContain("Do not choose merge-review merely because the objective says changes, assess, review, implementation, or read-only");
     expect(CONTEXT_SCHEMA.properties.intent.description).toContain("Choose implement when code or configuration will change");
+    expect(CONTEXT_SCHEMA.properties.intent.enum).toEqual(["implement", "advise", "merge-review", "merge"]);
     expect(CONTEXT_SCHEMA.properties.baseRef.description).toContain("origin/dev");
-    expect(CONTEXT_SCHEMA.properties.baseRef.description).toContain("does not fetch remotes");
+    expect(CONTEXT_SCHEMA.properties.baseRef.description).toContain("without moving the local remote-tracking ref");
   });
 
   it("teaches capable agents to use named command batches without narrative questions", () => {
@@ -38,7 +39,8 @@ describe("new configuration", () => {
   it("parses the new CLI commands", () => {
     expect(parseCommand(["run", "status", "--", "pnpm", "lint"], "/repo")).toMatchObject({ kind: "run", request: { workspaceRoot: "/repo" } });
     expect(parseCommand(["run", "--", "pnpm", "lint"], "/repo")).toEqual({ kind: "run", request: { workspaceRoot: "/repo", command: "'pnpm' 'lint'" } });
-    expect(parseCommand(["context", "gather", "--intent", "review", "--reference", "task-083", "--reference", "src/a.ts", "--base-ref", "dev", "Gather evidence"], "/repo")).toEqual({ kind: "context", request: { action: "gather", workspaceRoot: "/repo", intent: "review", objective: "Gather evidence", references: ["task-083", "src/a.ts"], baseRef: "dev" } });
+    expect(parseCommand(["context", "gather", "--intent", "merge-review", "--reference", "task-083", "--reference", "src/a.ts", "--base-ref", "dev", "Gather evidence"], "/repo")).toEqual({ kind: "context", request: { action: "gather", workspaceRoot: "/repo", intent: "merge-review", objective: "Gather evidence", references: ["task-083", "src/a.ts"], baseRef: "dev" } });
+    expect(() => parseCommand(["context", "gather", "--intent", "advise", "--base-ref", "dev", "Gather evidence"], "/repo")).toThrow("--base-ref is only valid with --intent merge-review");
     expect(() => parseCommand(["context", "packet", "123e4567-e89b-12d3-a456-426614174000", "owner-1"], "/repo")).toThrow("Usage: distill context gather");
   });
 

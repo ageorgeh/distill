@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createGitContextProvider } from "../src/git-context";
@@ -31,7 +31,7 @@ describe("deterministic Git context", () => {
       await writeFile(path.join(root, "test.ts"), "export const covered = true;\n", "utf8");
       await git(root, ["add", "."]);
       await git(root, ["commit", "-m", "change"]);
-      const result = await createGitContextProvider().gather({ action: "gather", workspaceRoot: root, intent: "review", objective: "Review changes.", baseRef: base });
+      const result = await createGitContextProvider().gather({ action: "gather", workspaceRoot: root, intent: "merge-review", objective: "Review changes.", baseRef: base });
       expect(result.references).toEqual(["owner.ts", "test.ts"]);
       expect(result.changes).toEqual([
         { path: "owner.ts", additions: 1, deletions: 1, sources: ["committed"] },
@@ -56,7 +56,7 @@ describe("deterministic Git context", () => {
       await writeFile(path.join(root, "owner.ts"), "export const value = 'unstaged';\n", "utf8");
       await writeFile(path.join(root, "untracked.ts"), "export const untracked = true;\n", "utf8");
 
-      const result = await createGitContextProvider().gather({ action: "gather", workspaceRoot: root, intent: "review", objective: "Review the working tree.", baseRef: base });
+      const result = await createGitContextProvider().gather({ action: "gather", workspaceRoot: root, intent: "merge-review", objective: "Review the working tree.", baseRef: base });
       expect(result.references).toEqual(["committed.ts", "owner.ts", "untracked.ts"]);
       expect(result.changes).toEqual(expect.arrayContaining([
         { path: "committed.ts", additions: 1, deletions: 0, sources: ["committed"] },
@@ -66,6 +66,73 @@ describe("deterministic Git context", () => {
       expect(result.text).toContain("WORKING-TREE PATCH");
       expect(result.text).toContain("UNTRACKED FILES\n- untracked.ts");
       expect(result.text).toContain("+export const value = 'unstaged';");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("uses the current remote branch commit without moving the local remote-tracking ref", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "distill-git-remote-base-"));
+    const seed = path.join(parent, "seed");
+    const remote = path.join(parent, "remote.git");
+    const review = path.join(parent, "review");
+    const contributor = path.join(parent, "contributor");
+    try {
+      await mkdir(seed);
+      await git(seed, ["init", "-b", "dev"]);
+      await git(seed, ["config", "user.email", "distill@example.test"]);
+      await git(seed, ["config", "user.name", "Distill Test"]);
+      await writeFile(path.join(seed, "owner.ts"), "export const value = 'base';\n", "utf8");
+      await git(seed, ["add", "."]);
+      await git(seed, ["commit", "-m", "base"]);
+      await mkdir(remote);
+      await git(remote, ["init", "--bare"]);
+      await git(remote, ["symbolic-ref", "HEAD", "refs/heads/dev"]);
+      await git(seed, ["remote", "add", "origin", remote]);
+      await git(seed, ["push", "-u", "origin", "dev"]);
+      await git(parent, ["clone", remote, review]);
+      await git(parent, ["clone", remote, contributor]);
+      await git(review, ["config", "user.email", "distill@example.test"]);
+      await git(review, ["config", "user.name", "Distill Test"]);
+      await git(contributor, ["config", "user.email", "distill@example.test"]);
+      await git(contributor, ["config", "user.name", "Distill Test"]);
+      const staleLocalBase = (await git(review, ["rev-parse", "origin/dev"])).trim();
+      await writeFile(path.join(contributor, "upstream.ts"), "export const upstream = true;\n", "utf8");
+      await git(contributor, ["add", "."]);
+      await git(contributor, ["commit", "-m", "upstream"]);
+      await git(contributor, ["push", "origin", "dev"]);
+      const currentRemoteBase = (await git(contributor, ["rev-parse", "HEAD"])).trim();
+      await git(review, ["checkout", "-b", "feature"]);
+      await writeFile(path.join(review, "feature.ts"), "export const feature = true;\n", "utf8");
+      await git(review, ["add", "."]);
+      await git(review, ["commit", "-m", "feature"]);
+
+      const result = await createGitContextProvider().gather({ action: "gather", workspaceRoot: review, intent: "merge-review", objective: "Review feature.", baseRef: "origin/dev" });
+
+      expect(result.baseResolution).toMatchObject({
+        requestedRef: "origin/dev",
+        localCommit: staleLocalBase,
+        resolvedCommit: currentRemoteBase,
+        advertisedCommit: currentRemoteBase,
+        source: "remote-verified",
+        localWasStale: true,
+      });
+      expect((await git(review, ["rev-parse", "origin/dev"])).trim()).toBe(staleLocalBase);
+      expect(result.commands.some((command) => command.includes("--no-write-fetch-head"))).toBe(true);
+      expect(result.text).toContain("base_source: remote-verified");
+    } finally { await rm(parent, { recursive: true, force: true }); }
+  });
+
+  it("records an explicit local fallback when a remote base cannot be refreshed", async () => {
+    const root = await repository();
+    try {
+      const base = (await git(root, ["rev-parse", "HEAD"])).trim();
+      await git(root, ["remote", "add", "origin", path.join(root, "missing-remote.git")]);
+      await git(root, ["update-ref", "refs/remotes/origin/dev", base]);
+      await writeFile(path.join(root, "owner.ts"), "export const value = 'changed';\n", "utf8");
+      await git(root, ["commit", "-am", "change"]);
+      const result = await createGitContextProvider().gather({ action: "gather", workspaceRoot: root, intent: "merge-review", objective: "Review changes.", baseRef: "origin/dev" });
+      expect(result.baseResolution).toMatchObject({ source: "local-fallback", localCommit: base, resolvedCommit: base, remote: "origin", remoteBranch: "dev" });
+      expect(result.baseResolution?.fallbackReason).toContain("ls-remote");
+      expect(result.text).toContain("remote_refresh_fallback:");
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

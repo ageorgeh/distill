@@ -74,7 +74,7 @@ Input:
 ```ts
 interface ContextRequest {
   workspaceRoot: string;
-  intent: "implement" | "advise" | "review" | "merge";
+  intent: "implement" | "advise" | "merge-review" | "merge";
   objective: string;
   references?: string[];
   inlineEvidence?: string;
@@ -92,7 +92,7 @@ Absolute path to the target repository.
 
 - `implement`: gather context needed to make a correct first implementation pass.
 - `advise`: gather context needed to compare options or explain the best approach without editing.
-- `review`: gather requirements and repository evidence needed to review a changeset.
+- `merge-review`: gather requirements and repository evidence needed to review an actual branch, pull/merge request, commit, diff, or working-tree changeset.
 - `merge`: gather conflict, branch, and surrounding architectural context needed to resolve a merge.
 
 `objective`
@@ -125,7 +125,7 @@ Do not put reporting instructions, requested response wording, reviewer orchestr
 
 `baseRef`
 
-Optional base branch or commit for review mode. If omitted, use the target repository’s `.distill/config.toml` default when available.
+Optional base branch or commit for `merge-review` mode only. If omitted, use the target repository’s `.distill/config.toml` default when available. Remote-tracking bases are verified against the current remote branch; missing commit objects are fetched without moving the user's local remote-tracking ref. Remote failure is recorded as an explicit local fallback.
 
 #### MCP tool description
 
@@ -213,7 +213,7 @@ After implementation, the separate review agent should call Distill itself:
 ```json
 {
   "workspaceRoot": "/home/alex/code/cms",
-  "intent": "review",
+  "intent": "merge-review",
   "objective": "Prepare evidence for reviewing the current branch implementation against the complete task-083 contract.",
   "references": ["task-083"],
   "baseRef": "dev"
@@ -354,7 +354,7 @@ For implement intent, focus on what is required for a correct first edit.
 For advise intent, gather the contracts and alternatives needed to compare
 approaches without assuming implementation.
 
-For review intent, inspect the base-to-head changeset and compare it with the
+For merge-review intent, inspect the base-to-head changeset and compare it with the
 referenced requirements and nearby repository contracts.
 
 For merge intent, inspect unmerged files first. Compare base, ours, and theirs

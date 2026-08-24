@@ -21,7 +21,7 @@ export const DISTILL_LLAMA_MODEL = "distill-local";
 
 export type Provider = "local" | "ollama" | "external" | "codex";
 export type LocalBackend = "auto" | "mlx" | "llamacpp";
-export type ContextIntent = "implement" | "advise" | "review" | "merge";
+export type ContextIntent = "implement" | "advise" | "merge-review" | "merge";
 
 export interface OutputConfig {
   provider: Provider;
@@ -192,7 +192,7 @@ export function parseCommand(argv: string[], cwd = process.cwd()): Command {
     const references: string[] = []; const objective: string[] = [];
     for (let index = 2; index < argv.length; index += 1) {
       const token = argv[index];
-      if (token === "--intent") { const value = argv[++index]; if (!value || !["implement", "advise", "review", "merge"].includes(value)) throw new UsageError("--intent must be implement, advise, review, or merge."); intent = value as ContextIntent; continue; }
+      if (token === "--intent") { const value = argv[++index]; if (!value || !["implement", "advise", "merge-review", "merge"].includes(value)) throw new UsageError("--intent must be implement, advise, merge-review, or merge."); intent = value as ContextIntent; continue; }
       if (token === "--reference") { const value = argv[++index]; if (!value) throw new UsageError("--reference requires a value."); references.push(value); continue; }
       if (token === "--base-ref") { baseRef = argv[++index]; if (!baseRef) throw new UsageError("--base-ref requires a value."); continue; }
       if (token === "--inline-evidence-file") { inlineEvidenceFile = argv[++index]; if (!inlineEvidenceFile) throw new UsageError("--inline-evidence-file requires a path."); continue; }
@@ -201,6 +201,7 @@ export function parseCommand(argv: string[], cwd = process.cwd()): Command {
     }
     const joined = objective.join(" ").trim();
     if (!joined) throw new UsageError("A retrieval objective is required.");
+    if (baseRef && intent !== "merge-review") throw new UsageError("--base-ref is only valid with --intent merge-review.");
     return { kind: "context", request: { action: "gather", workspaceRoot: cwd, intent, objective: joined, ...(references.length ? { references } : {}), ...(baseRef ? { baseRef } : {}) }, ...(inlineEvidenceFile ? { inlineEvidenceFile } : {}) };
   }
   throw new UsageError("Usage: distill mcp | distill context gather ... | distill run [question] -- <command>");

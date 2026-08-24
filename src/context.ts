@@ -32,8 +32,11 @@ function gortexTelemetry(value: GortexContextResult | GortexAttemptDetails) {
     gitReferenceCount: value.gitReferenceCount,
     selectedGitReferences: value.selectedGitReferences,
     gitSeedDecisions: value.gitSeedDecisions,
-    gitAreaDigest: value.gitAreaDigest,
+    indexStatus: value.indexStatus,
+    indexCommand: value.indexCommand,
     ...("bytes" in value ? {
+      status: value.status,
+      ...(value.failure ? { failure: value.failure } : {}),
       bytes: value.bytes,
       rawBytes: value.rawBytes,
       truncated: value.truncated,
@@ -42,6 +45,28 @@ function gortexTelemetry(value: GortexContextResult | GortexAttemptDetails) {
       deterministicEvidenceBytes: value.deterministicEvidenceBytes,
     } : {}),
   };
+}
+
+function gitTelemetry(value: GitContextResult) {
+  return {
+    references: value.references,
+    changes: value.changes,
+    patchReferences: value.patchReferences,
+    commands: value.commands,
+    truncated: value.truncated,
+    bytes: Buffer.byteLength(value.text),
+    ...(value.baseResolution ? { baseResolution: value.baseResolution } : {}),
+  };
+}
+
+function retrievalNotices(retrieval: GortexContextResult): string[] {
+  if (retrieval.status !== "degraded") return [];
+  const reasons = [
+    retrieval.failure?.slice(0, 1_000),
+    retrieval.indexStatus.status === "stale" ? `Gortex index stale: HEAD ${retrieval.indexStatus.headCommit ?? "unknown"}, indexed ${retrieval.indexStatus.indexedCommit ?? "unknown"}.` : undefined,
+    retrieval.indexStatus.status === "untracked" ? "Gortex did not report the workspace as tracked." : undefined,
+  ].filter(Boolean).join(" ");
+  return [`Graph retrieval degraded${reasons ? `: ${reasons}` : "."} Deterministic Git, explicit-reference, and documentation evidence was still supplied to the selector.`];
 }
 
 export function createContextHandler(config: ResolvedConfig, dependencies: ContextHandlerDependencies = {}) {
@@ -68,12 +93,17 @@ async function gather(config: ResolvedConfig, request: ContextGatherRequest, dep
   };
   try {
     if (!path.isAbsolute(request.workspaceRoot)) throw new Error("workspaceRoot must be an absolute path.");
+    if (request.baseRef && request.intent !== "merge-review") throw new Error("baseRef is only valid for merge-review context.");
     const workspaceRoot = await realpath(request.workspaceRoot);
     phase = "resolve-config";
     const [repositoryConfig, resolvedLimit] = await Promise.all([readRepositoryConfig(workspaceRoot), (dependencies.resolveLimit ?? resolveToolOutputTokenLimit)()]);
     resolved = resolvedLimit;
     budget = resultBudget(resolved);
-    const configuredRequest: ContextGatherRequest = { ...request, workspaceRoot, ...(request.baseRef || !repositoryConfig.defaultBase ? {} : { baseRef: repositoryConfig.defaultBase }) };
+    const configuredRequest: ContextGatherRequest = {
+      ...request,
+      workspaceRoot,
+      ...(request.intent === "merge-review" && !request.baseRef && repositoryConfig.defaultBase ? { baseRef: repositoryConfig.defaultBase } : {}),
+    };
     phase = "git-context";
     gitContext = await (dependencies.gitContext ?? createGitContextProvider()).gather(configuredRequest, { signal: options.signal });
     phase = "gortex-overgather";
@@ -86,11 +116,11 @@ async function gather(config: ResolvedConfig, request: ContextGatherRequest, dep
     phase = "provider";
     response = await (dependencies.provider ?? createCodexContextProvider(config.context)).gather({ request: configuredRequest, repositoryConfig, candidateContext: retrieval.text }, { signal: options.signal });
     phase = "assemble-source-pack";
-    const built = await buildContextSourcePack({ contextId, workspaceRoot, manifest: response.manifest, resultByteBudget: budget.resultByteBudget });
+    const built = await buildContextSourcePack({ contextId, workspaceRoot, manifest: response.manifest, resultByteBudget: budget.resultByteBudget, notices: retrievalNotices(retrieval) });
     normalization = built.normalization;
     await writeTelemetry(telemetryRoot, contextId, {
       ...base, durationMs: Date.now() - startedAt, ...(response.usage ? { providerUsage: response.usage } : {}), childCommandCalls: 0,
-      gitContext: { references: gitContext.references, changes: gitContext.changes, commands: gitContext.commands, truncated: gitContext.truncated, bytes: Buffer.byteLength(gitContext.text) },
+      gitContext: gitTelemetry(gitContext),
       gortex: gortexTelemetry(retrieval),
       ...limitTelemetry(resolved), ...budget, targetResultByteBudget: built.targetByteBudget, hardResultByteBudget: built.hardByteBudget,
       broadContext: built.broad, manifestValidation: built.normalization, sourceManifest: built.manifest,
@@ -106,7 +136,7 @@ async function gather(config: ResolvedConfig, request: ContextGatherRequest, dep
       failure: error instanceof Error ? error.message : String(error),
       ...(response?.usage ? { providerUsage: response.usage } : {}),
       ...(response ? { childCommandCalls: 0 } : {}),
-      ...(gitContext ? { gitContext: { references: gitContext.references, changes: gitContext.changes, commands: gitContext.commands, truncated: gitContext.truncated, bytes: Buffer.byteLength(gitContext.text) } } : {}),
+      ...(gitContext ? { gitContext: gitTelemetry(gitContext) } : {}),
       ...(retrieval ? { gortex: gortexTelemetry(retrieval) } : gortexAttempt ? { gortex: gortexTelemetry(gortexAttempt) } : {}),
       ...(resolved ? limitTelemetry(resolved) : {}),
       ...(budget ?? {}),

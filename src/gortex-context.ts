@@ -10,9 +10,9 @@ const DOCUMENTATION_FILE_BYTE_LIMIT = 20_000;
 const DOCUMENTATION_TOTAL_BYTE_LIMIT = 40_000;
 const INLINE_EVIDENCE_BYTE_LIMIT = 16_000;
 const DIAGNOSTIC_BYTE_LIMIT = 16_000;
-const GIT_SEED_PATH_LIMIT = 24;
-const GIT_SEED_BYTE_LIMIT = 4_096;
-const GIT_AREA_DIGEST_LIMIT = 20;
+const GIT_SEED_PATH_LIMIT = 6;
+const GIT_SEED_BYTE_LIMIT = 1_536;
+const INDEX_STATUS_TIMEOUT_MS = 5_000;
 
 export interface GitSeedDecision {
   path: string;
@@ -34,10 +34,13 @@ export interface GortexAttemptDetails {
   gitReferenceCount: number;
   selectedGitReferences: string[];
   gitSeedDecisions: GitSeedDecision[];
-  gitAreaDigest: string;
+  indexStatus: GortexIndexStatus;
+  indexCommand: string[];
 }
 
 export interface GortexContextResult extends GortexAttemptDetails {
+  status: "complete" | "degraded";
+  failure?: string;
   text: string;
   bytes: number;
   rawBytes: number;
@@ -45,6 +48,14 @@ export interface GortexContextResult extends GortexAttemptDetails {
   supplementedReferences: string[];
   documentationIndexes: string[];
   deterministicEvidenceBytes: number;
+}
+
+export interface GortexIndexStatus {
+  status: "fresh" | "stale" | "untracked" | "unknown";
+  headCommit?: string;
+  indexedCommit?: string;
+  lastIndexed?: string;
+  diagnostic?: string;
 }
 
 export interface GortexGatherOptions {
@@ -67,10 +78,9 @@ interface GortexDependencies {
 interface GitSeedSelection {
   selected: string[];
   decisions: GitSeedDecision[];
-  areaDigest: string;
 }
 
-const TOKEN_STOP_WORDS = new Set(["and", "the", "for", "from", "into", "with", "this", "that", "changes", "change", "review", "implement", "implementation", "file", "files", "task", "packages", "modules", "src", "tests", "test"]);
+const TOKEN_STOP_WORDS = new Set(["and", "the", "for", "from", "into", "with", "this", "that", "changes", "change", "review", "implement", "implementation", "file", "files", "task", "packages", "modules", "src", "tests", "test", "core"]);
 
 function tokens(input: string): Set<string> {
   return new Set(input.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3 && !TOKEN_STOP_WORDS.has(token)));
@@ -97,26 +107,35 @@ function pathWithoutRange(reference: string): string {
 
 function selectGitSeeds(request: ContextGatherRequest, changes: GitChange[]): GitSeedSelection {
   const explicit = new Set((request.references ?? []).map(pathWithoutRange));
-  const queryTokens = tokens([request.objective, ...(request.references ?? [])].join(" "));
-  const ranked: Array<GitSeedDecision & { overlap: number }> = changes.map((change) => {
+  const explicitDirectories = new Set([...explicit].map((file) => path.posix.dirname(file)).filter((directory) => directory !== "."));
+  const eligibleChanges = changes.filter((change) => ["implementation", "contract", "test"].includes(category(change.path)));
+  const tokenFrequency = new Map<string, number>();
+  for (const change of eligibleChanges) {
+    for (const token of tokens(change.path)) tokenFrequency.set(token, (tokenFrequency.get(token) ?? 0) + 1);
+  }
+  const frequencyLimit = Math.max(2, Math.ceil(eligibleChanges.length * 0.12));
+  const queryTokens = new Set([...tokens(request.objective)].filter((token) => (tokenFrequency.get(token) ?? 0) <= frequencyLimit));
+  const ranked: Array<GitSeedDecision & { overlap: number; adjacent: boolean }> = changes.map((change) => {
     const pathTokens = tokens(change.path);
     const overlap = [...pathTokens].filter((token) => queryTokens.has(token)).length;
     const kind = category(change.path);
-    const base = { implementation: 500, contract: 450, test: 350, documentation: 180, generated: 40 }[kind];
+    const adjacent = [...explicitDirectories].some((directory) => path.posix.dirname(change.path) === directory);
+    const base = { implementation: 90, contract: 70, test: 50, documentation: 0, generated: 0 }[kind];
     const changedLines = change.additions + change.deletions;
-    const magnitude = Math.min(80, Math.floor(Math.log2(changedLines + 1) * 12));
+    const magnitude = Math.min(40, Math.floor(Math.log2(changedLines + 1) * 6));
     const working = change.sources.includes("working-tree") ? 30 : change.sources.includes("untracked") ? 20 : 0;
     return {
       path: change.path,
       selected: false,
       category: kind,
       area: area(change.path),
-      score: base + (overlap * 120) + magnitude + working,
+      score: base + (overlap * 500) + (adjacent ? 350 : 0) + magnitude + working,
       additions: change.additions,
       deletions: change.deletions,
       sources: change.sources,
-      reason: explicit.has(change.path) ? "already supplied as an explicit reference" : "lower-ranked within the graph-seed budget",
+      reason: explicit.has(change.path) ? "already supplied as an explicit reference" : "not a high-confidence objective neighbour",
       overlap,
+      adjacent,
     };
   }).sort((left, right) => right.score - left.score || left.path.localeCompare(right.path));
 
@@ -132,29 +151,14 @@ function selectGitSeeds(request: ContextGatherRequest, changes: GitChange[]): Gi
     selectedBytes += bytes;
   };
 
-  for (const kind of ["implementation", "contract", "test", "documentation"] as const) {
-    choose(ranked.find((item) => item.category === kind && !explicit.has(item.path)), `highest-ranked ${kind} change`);
-  }
-  const useful = ranked.filter((item) => item.category !== "generated" || item.overlap > 0);
-  const areas = [...new Set(useful.filter((item) => !explicit.has(item.path)).map((item) => item.area))]
-    .sort((left, right) => {
-      const leftScore = ranked.find((item) => item.area === left)?.score ?? 0;
-      const rightScore = ranked.find((item) => item.area === right)?.score ?? 0;
-      return rightScore - leftScore || left.localeCompare(right);
-    });
-  for (const changedArea of areas) choose(useful.find((item) => item.area === changedArea && !selected.has(item.path)), `representative for changed area ${changedArea}`);
-  for (const decision of useful) choose(decision, decision.overlap ? `high-ranked change with ${decision.overlap} objective/path token match${decision.overlap === 1 ? "" : "es"}` : "highest remaining changed-file score");
+  const useful = ranked.filter((item) => ["implementation", "contract", "test"].includes(item.category) && (item.overlap > 0 || item.adjacent));
+  for (const decision of useful) choose(decision, decision.adjacent
+    ? `same-directory neighbour of an explicit file${decision.overlap ? ` with ${decision.overlap} discriminative objective match${decision.overlap === 1 ? "" : "es"}` : ""}`
+    : `high-confidence change with ${decision.overlap} discriminative objective match${decision.overlap === 1 ? "" : "es"}`);
   for (const decision of ranked) {
-    if (!decision.selected && decision.category === "generated" && decision.overlap === 0) decision.reason = "generated or snapshot-like path without objective overlap";
+    if (!decision.selected && (decision.category === "generated" || decision.category === "documentation")) decision.reason = "documentation/generated paths are never inferred review graph seeds";
   }
-
-  const areaCounts = new Map<string, number>();
-  for (const change of changes) areaCounts.set(area(change.path), (areaCounts.get(area(change.path)) ?? 0) + 1);
-  const sortedAreas = [...areaCounts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
-  const visibleAreas = sortedAreas.slice(0, GIT_AREA_DIGEST_LIMIT);
-  const remaining = sortedAreas.slice(GIT_AREA_DIGEST_LIMIT).reduce((total, item) => total + item[1], 0);
-  const areaDigest = [...visibleAreas.map(([name, count]) => `- ${name}: ${count} file${count === 1 ? "" : "s"}`), ...(remaining ? [`- ${remaining} files across ${sortedAreas.length - visibleAreas.length} additional areas`] : [])].join("\n");
-  return { selected: [...selected], decisions: ranked.map(({ overlap: _overlap, ...decision }) => decision), areaDigest };
+  return { selected: [...selected], decisions: ranked.map(({ overlap: _overlap, adjacent: _adjacent, ...decision }) => decision) };
 }
 
 function retrievalTask(request: ContextGatherRequest, selection: GitSeedSelection): string {
@@ -163,7 +167,6 @@ function retrievalTask(request: ContextGatherRequest, selection: GitSeedSelectio
     request.objective,
     request.references?.length ? `Explicit retrieval references:\n${request.references.map((reference) => `- ${reference}`).join("\n")}` : "",
     selection.selected.length ? `Representative changed-file graph seeds:\n${selection.selected.map((reference) => `- ${reference}`).join("\n")}` : "",
-    selection.areaDigest ? `Changed-area digest (complete change locations are supplied separately as deterministic evidence):\n${selection.areaDigest}` : "",
     evidence ? `Additional supplied evidence:\n${evidence}${Buffer.byteLength(request.inlineEvidence ?? "") > INLINE_EVIDENCE_BYTE_LIMIT ? "\n[additional evidence truncated]" : ""}` : "",
   ].filter(Boolean).join("\n\n");
 }
@@ -173,13 +176,18 @@ function appendBounded(current: string, chunk: unknown, limit: number): string {
   return Buffer.byteLength(combined) <= limit ? combined : Buffer.from(combined).subarray(-limit).toString("utf8");
 }
 
-function runGortex(
+class GortexCancellationError extends Error {
+  constructor() { super("Gortex context retrieval was cancelled."); this.name = "GortexCancellationError"; }
+}
+
+function runGortexCommand(
   executable: string,
   args: string[],
   cwd: string,
   timeoutMs: number,
   signal: AbortSignal | undefined,
   spawnImpl: typeof spawn,
+  operation: "explore" | "index-status",
 ): Promise<{ stdout: string; rawBytes: number }> {
   return new Promise((resolve, reject) => {
     let child: ReturnType<typeof spawn>;
@@ -188,7 +196,7 @@ function runGortex(
     let rawBytes = 0;
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const cancelled = new Error("Gortex context retrieval was cancelled.");
+    const cancelled = new GortexCancellationError();
     let onAbort = () => {};
     const interrupt = () => {
       if (!child || child.exitCode !== null) return;
@@ -212,17 +220,54 @@ function runGortex(
       finish(code === "ENOENT" ? new Error(`Gortex CLI not found: ${executable}.`) : error as Error);
       return;
     }
-    timer = setTimeout(() => { interrupt(); finish(new Error(`Gortex explore timed out after ${timeoutMs}ms; the CLI was interrupted, but Gortex may continue daemon-side work if cancellation is not propagated.`)); }, timeoutMs);
+    timer = setTimeout(() => {
+      interrupt();
+      finish(new Error(operation === "explore"
+        ? `Gortex explore timed out after ${timeoutMs}ms; the CLI was interrupted, but Gortex may continue daemon-side work if cancellation is not propagated.`
+        : `Gortex index-status check timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
     signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout!.on("data", (chunk) => { const value = String(chunk); rawBytes += Buffer.byteLength(value); stdout += value; });
     child.stderr!.on("data", (chunk) => { stderr = appendBounded(stderr, chunk, DIAGNOSTIC_BYTE_LIMIT); });
     child.on("error", (error: NodeJS.ErrnoException) => finish(error.code === "ENOENT" ? new Error(`Gortex CLI not found: ${executable}.`) : error));
     child.on("close", (code) => {
       if (code === 0 && stdout.trim()) finish();
-      else if (code === 0) finish(new Error("Gortex explore returned no context."));
-      else finish(new Error(`Gortex explore exited with code ${code ?? "unknown"}: ${stderr.trim() || "no diagnostic output"}`));
+      else if (code === 0) finish(new Error(`Gortex ${operation} returned no output.`));
+      else finish(new Error(`Gortex ${operation} exited with code ${code ?? "unknown"}: ${stderr.trim() || "no diagnostic output"}`));
     });
   });
+}
+
+function diagnostic(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").trim().slice(0, DIAGNOSTIC_BYTE_LIMIT);
+}
+
+async function inspectIndex(
+  executable: string,
+  root: string,
+  signal: AbortSignal | undefined,
+  spawnImpl: typeof spawn,
+): Promise<{ value: GortexIndexStatus; command: string[] }> {
+  const args = ["repos", "--json", "--no-progress"];
+  const command = [executable, ...args];
+  try {
+    const result = await runGortexCommand(executable, args, root, INDEX_STATUS_TIMEOUT_MS, signal, spawnImpl, "index-status");
+    const entries = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
+    const repository = entries.find((entry) => typeof entry.path === "string" && path.resolve(entry.path) === path.resolve(root));
+    if (!repository) return { value: { status: "untracked", diagnostic: "Workspace is absent from gortex repos." }, command };
+    return {
+      value: {
+        status: repository.stale === true ? "stale" : "fresh",
+        ...(typeof repository.head_commit === "string" ? { headCommit: repository.head_commit } : {}),
+        ...(typeof repository.indexed_commit === "string" ? { indexedCommit: repository.indexed_commit } : {}),
+        ...(typeof repository.last_indexed === "string" ? { lastIndexed: repository.last_indexed } : {}),
+      },
+      command,
+    };
+  } catch (error) {
+    if (error instanceof GortexCancellationError) throw error;
+    return { value: { status: "unknown", diagnostic: diagnostic(error) }, command };
+  }
 }
 
 function normalizeReference(root: string, reference: string): { relative: string; startLine?: number; endLine?: number } | undefined {
@@ -316,26 +361,36 @@ function boundedCandidateContext(
   deterministicEvidence: string,
   references: string[],
   selectedGitReferences: string[],
-  gitAreaDigest: string,
+  status: GortexContextResult["status"],
+  failure: string | undefined,
+  indexStatus: GortexIndexStatus,
   limit: number,
 ): { text: string; truncated: boolean } {
+  const indexDescription = indexStatus.status === "stale"
+    ? `Gortex index is stale (HEAD ${indexStatus.headCommit ?? "unknown"}, indexed ${indexStatus.indexedCommit ?? "unknown"}).`
+    : indexStatus.status === "untracked"
+      ? "Gortex does not report this workspace as tracked."
+      : indexStatus.status === "unknown"
+        ? `Gortex index freshness is unknown${indexStatus.diagnostic ? `: ${indexStatus.diagnostic}` : "."}`
+        : "";
   const header = [
     "GORTEX OVER-GATHER (deterministic graph retrieval; candidate evidence, not conclusions)",
+    status === "degraded" ? `GRAPH RETRIEVAL DEGRADED\n${[failure, indexDescription].filter(Boolean).join(" ")} Deterministic Git, explicit-reference, and documentation evidence below remains authoritative.` : "",
     references.length ? `EXPLICIT REFERENCES (always consider these even if graph ranking omitted them)\n${references.map((reference) => `- ${reference}`).join("\n")}` : "",
     selectedGitReferences.length ? `REPRESENTATIVE GIT GRAPH SEEDS (the complete changed-file list remains in deterministic evidence)\n${selectedGitReferences.map((reference) => `- ${reference}`).join("\n")}` : "",
-    gitAreaDigest ? `CHANGED-AREA DIGEST\n${gitAreaDigest}` : "",
   ].filter(Boolean).join("\n\n");
   const evidenceInput = [
     supplement ? `EXPLICIT REFERENCE SOURCES\n${supplement}` : "",
     deterministicEvidence ? `DETERMINISTIC GIT EVIDENCE\n${deterministicEvidence}` : "",
     documentation ? `REPOSITORY DOCUMENTATION INDEXES\n${documentation}` : "",
   ].filter(Boolean).join("\n\n");
+  const graphOutput = gortexOutput || `[unavailable${failure ? `: ${failure}` : ""}]`;
   const fixedBytes = Buffer.byteLength(header) + Buffer.byteLength("GORTEX TOON OUTPUT") + (evidenceInput ? 6 : 4);
   const allowance = Math.max(0, limit - fixedBytes);
-  const graphReserve = Math.min(Buffer.byteLength(gortexOutput), Math.max(40_000, Math.floor(allowance * 0.35)));
+  const graphReserve = Math.min(Buffer.byteLength(graphOutput), Math.max(40_000, Math.floor(allowance * 0.35)));
   const evidence = boundedText(evidenceInput, Math.max(0, allowance - graphReserve), "deterministic candidate evidence omitted to honor the context budget");
   const graphAllowance = Math.max(0, allowance - Buffer.byteLength(evidence.text));
-  const graph = boundedText(gortexOutput, graphAllowance, "Gortex output middle omitted to honor the candidate-context budget");
+  const graph = boundedText(graphOutput, graphAllowance, "Gortex output middle omitted to honor the candidate-context budget");
   const text = [header, evidence.text, "GORTEX TOON OUTPUT", graph.text].filter(Boolean).join("\n\n");
   return { text: Buffer.from(text).subarray(0, limit).toString("utf8"), truncated: evidence.truncated || graph.truncated || Buffer.byteLength(text) > limit };
 }
@@ -356,12 +411,23 @@ export function createGortexContextProvider(config: ContextConfig, dependencies:
       const task = retrievalTask(request, selection);
       const args = ["explore", task, "--index", request.workspaceRoot, "--format", "toon", "--max-symbols", String(config.gortexMaxSymbols), "--no-progress"];
       const command = [config.gortexCommand, ...args];
+      const indexCommand = [config.gortexCommand, "repos", "--json", "--no-progress"];
       const startedAt = Date.now();
-      let result: Awaited<ReturnType<typeof runGortex>>;
+      const supplementReferences = [...new Set([...(request.references ?? []), ...selection.selected])];
+      let indexStatus: GortexIndexStatus = { status: "unknown", diagnostic: "Index status was not checked." };
+      let supplements: Awaited<ReturnType<typeof explicitSupplements>>;
+      let documentation: Awaited<ReturnType<typeof documentationSources>>;
       try {
-        result = await runGortex(config.gortexCommand, args, request.workspaceRoot, config.gortexTimeoutMs, options?.signal, deps.spawn);
+        const prepared = await Promise.all([
+          explicitSupplements(request.workspaceRoot, supplementReferences, deps),
+          documentationSources(request.workspaceRoot, options?.documentationIndexes ?? [], deps),
+          inspectIndex(config.gortexCommand, request.workspaceRoot, options?.signal, deps.spawn),
+        ]);
+        supplements = prepared[0];
+        documentation = prepared[1];
+        indexStatus = prepared[2].value;
       } catch (error) {
-        throw new GortexGatherError(error instanceof Error ? error.message : String(error), {
+        throw new GortexGatherError(diagnostic(error), {
           durationMs: Date.now() - startedAt,
           command,
           retrievalTaskBytes: Buffer.byteLength(task),
@@ -369,21 +435,43 @@ export function createGortexContextProvider(config: ContextConfig, dependencies:
           gitReferenceCount: options?.gitChanges?.length ?? 0,
           selectedGitReferences: selection.selected,
           gitSeedDecisions: selection.decisions,
-          gitAreaDigest: selection.areaDigest,
+          indexStatus,
+          indexCommand,
         });
       }
-      const supplementReferences = [...new Set([...(request.references ?? []), ...selection.selected])];
-      const [supplements, documentation] = await Promise.all([
-        explicitSupplements(request.workspaceRoot, supplementReferences, deps),
-        documentationSources(request.workspaceRoot, options?.documentationIndexes ?? [], deps),
-      ]);
+      let stdout = "";
+      let rawBytes = 0;
+      let failure: string | undefined;
+      try {
+        const result = await runGortexCommand(config.gortexCommand, args, request.workspaceRoot, config.gortexTimeoutMs, options?.signal, deps.spawn, "explore");
+        stdout = result.stdout;
+        rawBytes = result.rawBytes;
+      } catch (error) {
+        if (error instanceof GortexCancellationError || options?.signal?.aborted) {
+          throw new GortexGatherError(diagnostic(error), {
+            durationMs: Date.now() - startedAt,
+            command,
+            retrievalTaskBytes: Buffer.byteLength(task),
+            explicitReferenceCount: request.references?.length ?? 0,
+            gitReferenceCount: options?.gitChanges?.length ?? 0,
+            selectedGitReferences: selection.selected,
+            gitSeedDecisions: selection.decisions,
+            indexStatus,
+            indexCommand,
+          });
+        }
+        failure = diagnostic(error);
+      }
+      const status = failure || indexStatus.status === "stale" || indexStatus.status === "untracked" ? "degraded" : "complete";
       const deterministicEvidence = options?.deterministicEvidence ?? "";
-      const bounded = boundedCandidateContext(result.stdout, supplements.text, documentation.text, deterministicEvidence, request.references ?? [], selection.selected, selection.areaDigest, config.gortexMaxOutputBytes);
+      const bounded = boundedCandidateContext(stdout, supplements.text, documentation.text, deterministicEvidence, request.references ?? [], selection.selected, status, failure, indexStatus, config.gortexMaxOutputBytes);
       return {
+        status,
+        ...(failure ? { failure } : {}),
         text: bounded.text,
         durationMs: Date.now() - startedAt,
         bytes: Buffer.byteLength(bounded.text),
-        rawBytes: result.rawBytes,
+        rawBytes,
         truncated: bounded.truncated,
         command,
         retrievalTaskBytes: Buffer.byteLength(task),
@@ -391,7 +479,8 @@ export function createGortexContextProvider(config: ContextConfig, dependencies:
         gitReferenceCount: options?.gitChanges?.length ?? 0,
         selectedGitReferences: selection.selected,
         gitSeedDecisions: selection.decisions,
-        gitAreaDigest: selection.areaDigest,
+        indexStatus,
+        indexCommand,
         supplementedReferences: supplements.files,
         documentationIndexes: documentation.files,
         deterministicEvidenceBytes: Buffer.byteLength(deterministicEvidence),

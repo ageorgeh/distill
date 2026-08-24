@@ -139,7 +139,7 @@ function boundedMetadata(manifest: ContextManifest, allowance: number): string[]
   return parts;
 }
 
-export async function buildContextSourcePack(options: { contextId: string; workspaceRoot: string; manifest: ContextManifest; resultByteBudget: number }): Promise<ContextSourcePack> {
+export async function buildContextSourcePack(options: { contextId: string; workspaceRoot: string; manifest: ContextManifest; resultByteBudget: number; notices?: string[] }): Promise<ContextSourcePack> {
   const normalized = await normalizeContextManifest(options.workspaceRoot, options.manifest);
   const hardByteBudget = Math.max(1_000, options.resultByteBudget);
   const targetByteBudget = Math.min(TARGET_RESULT_TOKENS * BYTES_PER_TOKEN, hardByteBudget);
@@ -148,7 +148,8 @@ export async function buildContextSourcePack(options: { contextId: string; works
   const candidateBytes = candidates.reduce((total, candidate) => total + bytes(candidate.text) + 2, 0);
   const broad = directFiles > 6 || normalized.manifest.files.length > 12 || candidateBytes > targetByteBudget;
   const allowance = broad ? hardByteBudget : targetByteBudget;
-  const header = `DISTILL CONTEXT id=${options.contextId}\nRepository discovery and initial source reading are complete. Treat exact source below as already read; make only targeted follow-up reads when editing requires surrounding code.`;
+  const noticeText = (options.notices ?? []).map((notice) => `CONTEXT NOTICE ${notice.replace(/\s+/g, " ").trim()}`).join("\n");
+  const header = `DISTILL CONTEXT id=${options.contextId}\nRepository discovery and initial source reading are complete. Treat exact source below as already read; make only targeted follow-up reads when editing requires surrounding code.${noticeText ? `\n${noticeText}` : ""}`;
   const metadata = boundedMetadata(normalized.manifest, allowance);
   const selected: SourceCandidate[] = [];
   const omitted: SourceCandidate[] = [];
