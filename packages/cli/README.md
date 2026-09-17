@@ -13,17 +13,16 @@ or flags.
 
 ```ts
 export default {
-  provider: "codex",
-  codexModel: "gpt-5.3-codex-spark",
-  timeoutMs: 180_000,
+  output: { provider: "codex", model: "gpt-5.6-luna", timeoutMs: 180_000 },
+  context: { model: "gpt-5.6-luna", reasoningEffort: "low" },
 };
 ```
 
-Pipe output into `distill` with a question:
+Run a command and optionally ask a question about its output:
 
 ```bash
-bun test 2>&1 | distill "Did the tests pass? Return PASS or FAIL."
+distill run "Summarize test failures" -- bun test
 ```
 
-Use `--debug` for fallback diagnostics, or `--help` and `--version` for the
-action reference.
+For repository context, use `distill context gather --intent implement "Locate the implementation."`.
+Use `--help` and `--version` for the command reference.

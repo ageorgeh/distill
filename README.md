@@ -32,21 +32,21 @@ There is no pipeline interface: do not pipe output into Distill. Use `run` only 
 
 ## Configure
 
-Keep `distill.config.ts` in the Distill installation. Context gathering is Codex/Spark-only; output compression supports Codex, local, Ollama, and OpenAI-compatible external providers.
+Keep `distill.config.ts` in the Distill installation. Context gathering uses Codex; output compression supports Codex, local, Ollama, and OpenAI-compatible external providers.
 
 ```ts
 import type { DistillConfig } from "./src/config";
 
 export default {
-  output: { provider: "codex", model: "gpt-5.3-codex-spark", codexCommand: "codex", timeoutMs: 180_000, smallOutputBytes: 2_000 },
-  context: { provider: "codex", model: "gpt-5.3-codex-spark", codexCommand: "codex", reasoningEffort: "low", timeoutMs: 90_000, gortexCommand: "gortex", gortexTimeoutMs: 60_000, gortexMaxSymbols: 100, gortexMaxOutputBytes: 200_000 },
+  output: { provider: "codex", model: "gpt-5.6-luna", codexCommand: "codex", timeoutMs: 180_000, smallOutputBytes: 2_000 },
+  context: { provider: "codex", model: "gpt-5.6-luna", codexCommand: "codex", reasoningEffort: "low", timeoutMs: 90_000, gortexCommand: "gortex", gortexTimeoutMs: 60_000, gortexMaxSymbols: 100, gortexMaxOutputBytes: 200_000 },
   telemetry: { directory: ".telemetry" },
 } satisfies DistillConfig;
 ```
 
-The supplied context objective is quoted as the parent agent's task. Gortex performs deterministic over-gathering with no LLM provider; Spark receives the result as inert candidate evidence and performs one tool-disabled manifest-selection inference rather than a repository-discovery loop. `gortexMaxSymbols` defaults to 100, `gortexMaxOutputBytes` defaults to 200,000 bytes (about 50,000 tokens), `gortexTimeoutMs` defaults to 60 seconds, and `timeoutMs` is Spark's hard deadline. `gortexCommand` may select a non-standard CLI path.
+The supplied context objective is quoted as the parent agent's task. Gortex performs deterministic over-gathering with no LLM provider; the configured Codex model receives the result as inert candidate evidence and performs one tool-disabled manifest-selection inference rather than a repository-discovery loop. `gortexMaxSymbols` defaults to 100, `gortexMaxOutputBytes` defaults to 200,000 bytes (about 50,000 tokens), `gortexTimeoutMs` defaults to 60 seconds, and `timeoutMs` is the Codex model's hard deadline. `gortexCommand` may select a non-standard CLI path.
 
-For `merge-review` retrieval, Distill keeps the complete changed-file list and bounded committed/working-tree patch as mandatory Spark evidence. Gortex receives at most six implementation, contract, or test paths with discriminative objective matches or same-directory proximity to an explicit file. It receives no changed-area digest and never infers documentation, generated, snapshot, or broad area-representative seeds. Selection scores and omission reasons are recorded in telemetry.
+For `merge-review` retrieval, Distill keeps the complete changed-file list and bounded committed/working-tree patch as mandatory evidence. Gortex receives at most six implementation, contract, or test paths with discriminative objective matches or same-directory proximity to an explicit file. It receives no changed-area digest and never infers documentation, generated, snapshot, or broad area-representative seeds. Selection scores and omission reasons are recorded in telemetry.
 
 Choose `implement` when code or configuration will change, and `advise` for read-only investigation, diagnosis, explanation, or assessment of existing behavior. Choose `merge-review` only when the actual branch, pull/merge request, commit, diff, or working-tree changeset is itself the subject; words such as “changes”, “assess”, “review”, “implementation”, or “read-only” do not make an objective a changeset review. Choose `merge` only when unmerged conflicts are the subject. For a remote-tracking base such as `origin/dev`, Distill verifies the current remote branch SHA and fetches missing commit objects without moving the user's remote-tracking ref, worktree, or configuration. If the remote cannot be reached, it records and exposes an explicit local-base fallback.
 

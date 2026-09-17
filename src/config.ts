@@ -1,7 +1,7 @@
 import cliPackage from "../packages/cli/package.json";
 
 export const DISTILL_VERSION = cliPackage.version;
-export const DEFAULT_CODEX_MODEL = "gpt-5.3-codex-spark";
+export const DEFAULT_CODEX_MODEL = "gpt-5.6-luna";
 export const DEFAULT_CODEX_COMMAND = "codex";
 export const DEFAULT_HOST = "http://127.0.0.1:11434/v1";
 export const DEFAULT_TIMEOUT_MS = 180_000;
